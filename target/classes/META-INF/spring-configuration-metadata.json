@@ -1,0 +1,32 @@
+{
+  "groups": [
+    {
+      "name": "blockstream",
+      "type": "com.Django.TraceChain.component.BlockstreamProperties",
+      "sourceType": "com.Django.TraceChain.component.BlockstreamProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "blockstream.api-url",
+      "type": "java.lang.String",
+      "sourceType": "com.Django.TraceChain.component.BlockstreamProperties"
+    },
+    {
+      "name": "blockstream.client-id",
+      "type": "java.lang.String",
+      "sourceType": "com.Django.TraceChain.component.BlockstreamProperties"
+    },
+    {
+      "name": "blockstream.client-secret",
+      "type": "java.lang.String",
+      "sourceType": "com.Django.TraceChain.component.BlockstreamProperties"
+    },
+    {
+      "name": "blockstream.token-url",
+      "type": "java.lang.String",
+      "sourceType": "com.Django.TraceChain.component.BlockstreamProperties"
+    }
+  ],
+  "hints": []
+}
