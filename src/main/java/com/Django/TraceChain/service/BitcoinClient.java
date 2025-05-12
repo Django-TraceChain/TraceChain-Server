@@ -6,7 +6,7 @@ package com.Django.TraceChain.service;
 import com.Django.TraceChain.Repository.TransactionRepository;
 import com.Django.TraceChain.Repository.WalletRepository;
 import com.Django.TraceChain.model.Transaction;
-import com.Django.TraceChain.model.WalletRelation;
+import com.Django.TraceChain.model.Transfer;
 import com.Django.TraceChain.model.Wallet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -78,6 +78,10 @@ public class BitcoinClient implements ChainClient {
         String token = accessToken.getAccessToken();
         if (token == null) return Collections.emptyList();
 
+        // 1) Wallet 조회 또는 생성
+        Wallet wallet = walletRepository.findById(address)
+            .orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
+
         RestTemplate restTemplate = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -87,43 +91,52 @@ public class BitcoinClient implements ChainClient {
         List<Transaction> transactionList = new ArrayList<>();
 
         try {
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
+            ResponseEntity<String> response = restTemplate.exchange(
+                url, HttpMethod.GET, entity, String.class);
             JsonNode rootArray = new ObjectMapper().readTree(response.getBody());
 
             for (JsonNode txNode : rootArray) {
+                // 2) Transaction 객체 생성 및 Wallet 연결
                 String txid = txNode.path("txid").asText();
                 long amount = 0;
                 for (JsonNode vout : txNode.path("vout")) {
                     amount += (long) vout.path("value").asDouble();
                 }
-
                 LocalDateTime txTime = LocalDateTime.ofInstant(
-                        Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong()),
-                        ZoneOffset.UTC
+                    Instant.ofEpochSecond(
+                        txNode.path("status").path("block_time").asLong()),
+                    ZoneOffset.UTC
                 );
 
-                Transaction transaction = new Transaction(txid, amount, txTime);
-                List<WalletRelation> transfers = new ArrayList<>();
+                Transaction tx = new Transaction(txid, amount, txTime);
+                tx.setWallet(wallet);
 
-                for (JsonNode input : txNode.path("vin")) {
-                    String sender = input.path("prevout").path("scriptpubkey_address").asText(null);
-                    long val = input.path("prevout").path("value").asLong(0);
+                // 3) 입력(vin) 관계 생성
+                for (JsonNode vin : txNode.path("vin")) {
+                    String sender = vin.path("prevout")
+                                       .path("scriptpubkey_address")
+                                       .asText(null);
+                    long val = vin.path("prevout").path("value").asLong(0);
                     if (sender != null) {
-                        transfers.add(new WalletRelation(transaction, sender, address, val));
+                        Transfer t = new Transfer(tx, sender, address, val);
+                        tx.addTransfer(t);
                     }
                 }
 
-                for (JsonNode output : txNode.path("vout")) {
-                    String receiver = output.path("scriptpubkey_address").asText(null);
-                    long val = output.path("value").asLong(0);
+                // 4) 출력(vout) 관계 생성
+                for (JsonNode vout : txNode.path("vout")) {
+                    String receiver = vout.path("scriptpubkey_address")
+                                          .asText(null);
+                    long val = vout.path("value").asLong(0);
                     if (receiver != null) {
-                        transfers.add(new WalletRelation(transaction, address, receiver, val));
+                        Transfer t = new Transfer(tx, address, receiver, val);
+                        tx.addTransfer(t);
                     }
                 }
 
-                transaction.setTransfers(transfers);
-                transactionRepository.save(transaction);
-                transactionList.add(transaction);
+                // 5) 저장 (cascade로 Transfer들도 함께 저장)
+                transactionRepository.save(tx);
+                transactionList.add(tx);
             }
         } catch (Exception e) {
             System.out.println("Bitcoin getTransactions error: " + e.getMessage());
@@ -131,6 +144,7 @@ public class BitcoinClient implements ChainClient {
 
         return transactionList;
     }
+
     
     public void traceTransactionsRecursive(String address, int depth, int maxDepth, Set<String> visited) {
         if (depth > maxDepth || visited.contains(address)) return;
@@ -143,7 +157,7 @@ public class BitcoinClient implements ChainClient {
         // 입출금 주소 수집
         Set<String> nextAddresses = new HashSet<>();
         for (Transaction tx : transactions) {
-            for (WalletRelation transfer : tx.getTransfers()) {
+            for (Transfer transfer : tx.getTransfers()) {
                 if (transfer.getSender() != null && !visited.contains(transfer.getSender())) {
                     nextAddresses.add(transfer.getSender());
                 }

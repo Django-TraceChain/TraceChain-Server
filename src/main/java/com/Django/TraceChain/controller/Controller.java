@@ -5,7 +5,7 @@
 package com.Django.TraceChain.controller;
 
 import com.Django.TraceChain.model.Transaction;
-import com.Django.TraceChain.model.WalletRelation;
+import com.Django.TraceChain.model.Transfer;
 import com.Django.TraceChain.model.Wallet;
 import com.Django.TraceChain.service.WalletService;
 
@@ -76,7 +76,7 @@ public class Controller {
             html.append("<strong>Amount:</strong> ").append(tx.getAmount()).append("<br>");
             html.append("<strong>Timestamp:</strong> ").append(tx.getTimestamp()).append("<br>");
             html.append("<ul>");
-            for (WalletRelation t : tx.getTransfers()) {
+            for (Transfer t : tx.getTransfers()) {
                 html.append("<li>");
                 if (t.getSender() != null)
                     html.append("From: ").append(t.getSender()).append(" → ");
