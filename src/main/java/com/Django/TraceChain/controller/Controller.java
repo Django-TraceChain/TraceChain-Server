@@ -1,0 +1,131 @@
+/*
+ * Controller - 사용자 요청을 받아서 Service에 전달
+ */
+
+package com.Django.TraceChain.controller;
+
+import com.Django.TraceChain.model.Transaction;
+import com.Django.TraceChain.model.WalletRelation;
+import com.Django.TraceChain.model.Wallet;
+import com.Django.TraceChain.service.WalletService;
+
+import java.util.List;
+import java.util.Set;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.*;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+public class Controller {
+
+    private final WalletService walletService;
+
+    @Autowired
+    public Controller(WalletService walletService) {
+        this.walletService = walletService;
+    }
+    
+    private String detectChain(String address) {
+        if (address == null) return "unknown";
+
+        if (address.startsWith("0x") && address.length() == 42) {
+            return "ethereum";
+        }
+
+        if (address.startsWith("1") || address.startsWith("3") || address.startsWith("bc1")) {
+            return "bitcoin";
+        }
+
+        return "unknown";
+    }
+
+
+    @GetMapping(value = "/search", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> search(@RequestParam(required = false) String address,
+                                         @RequestParam(defaultValue = "bitcoin") String chain) {
+        if (address == null || address.isEmpty()) {
+            return ResponseEntity.badRequest().body("<html><body><h3>Address is required.</h3></body></html>");
+        }
+        
+        // chain 파라미터가 없으면 자동 감지
+        if (chain == null || chain.isEmpty()) {
+            chain = detectChain(address);
+            if (chain.equals("unknown")) {
+                return ResponseEntity.badRequest().body("<html><body><h3>Cannot detect chain type from address.</h3></body></html>");
+            }
+        }
+
+        Wallet wallet = walletService.findAddress(chain, address);
+        if (wallet == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("<html><body><h3>Wallet not found or API error.</h3></body></html>");
+        }
+
+        List<Transaction> txList = walletService.getTransactions(chain, address);
+
+        StringBuilder html = new StringBuilder();
+        html.append("<html><body>");
+        html.append("<h2>Wallet Address: ").append(wallet.getAddress()).append("</h2>");
+        html.append("<p>Balance: ").append(wallet.getBalance()).append("</p>");
+        html.append("<h3>Transactions:</h3>");
+
+        for (Transaction tx : txList) {
+            html.append("<div style='margin-bottom:15px;'>");
+            html.append("<strong>TxID:</strong> ").append(tx.getTxID()).append("<br>");
+            html.append("<strong>Amount:</strong> ").append(tx.getAmount()).append("<br>");
+            html.append("<strong>Timestamp:</strong> ").append(tx.getTimestamp()).append("<br>");
+            html.append("<ul>");
+            for (WalletRelation t : tx.getTransfers()) {
+                html.append("<li>");
+                if (t.getSender() != null)
+                    html.append("From: ").append(t.getSender()).append(" → ");
+                if (t.getReceiver() != null)
+                    html.append("To: ").append(t.getReceiver()).append(" ");
+                html.append("Amount: ").append(t.getAmount());
+                html.append("</li>");
+            }
+            html.append("</ul></div>");
+        }
+
+        html.append("</body></html>");
+        return ResponseEntity.ok(html.toString());
+    }
+    
+    @GetMapping(value = "/trace", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> trace(@RequestParam(required = false) String address,
+                                        @RequestParam(defaultValue = "bitcoin") String chain,
+                                        @RequestParam(defaultValue = "0") int depth,
+                                        @RequestParam(defaultValue = "2") int maxDepth) {
+        if (address == null || address.isEmpty()) {
+            return ResponseEntity.badRequest().body("<html><body><h3>Address is required.</h3></body></html>");
+        }
+
+        // chain 자동 감지
+        if (chain == null || chain.isEmpty()) {
+            chain = detectChain(address);
+            if (chain.equals("unknown")) {
+                return ResponseEntity.badRequest().body("<html><body><h3>Cannot detect chain type from address.</h3></body></html>");
+            }
+        }
+
+        // 재귀 추적 수행
+        Set<String> visited = new java.util.HashSet<>();
+        walletService.traceTransactionsRecursive(chain, address, depth, maxDepth, visited);
+
+        // 결과 HTML 생성
+        StringBuilder html = new StringBuilder();
+        html.append("<html><body>");
+        html.append("<h2>Recursive Trace for Address: ").append(address).append("</h2>");
+        html.append("<p>Max Depth: ").append(maxDepth).append("</p>");
+        html.append("<p>Total Unique Addresses Visited: ").append(visited.size()).append("</p>");
+        html.append("<ul>");
+        for (String addr : visited) {
+            html.append("<li>").append(addr).append("</li>");
+        }
+        html.append("</ul></body></html>");
+
+        return ResponseEntity.ok(html.toString());
+    }
+
+}

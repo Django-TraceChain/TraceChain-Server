@@ -15,7 +15,7 @@ public class Transaction {
     private LocalDateTime timestamp; // 타임스탬프 (트랜잭션 발생 시간)
 
     @OneToMany(mappedBy = "transaction", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    private List<Transfer> transfers; // 입출금 정보
+    private List<WalletRelation> transfers; // 입출금 정보
 
     // 기본 생성자
     public Transaction() {}
@@ -52,11 +52,11 @@ public class Transaction {
         this.timestamp = timestamp;
     }
 
-    public List<Transfer> getTransfers() {
+    public List<WalletRelation> getTransfers() {
         return transfers;
     }
 
-    public void setTransfers(List<Transfer> transfers) {
+    public void setTransfers(List<WalletRelation> transfers) {
         this.transfers = transfers;
     }
 }

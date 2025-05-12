@@ -10,7 +10,7 @@ import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "transfers")
-public class Transfer {
+public class WalletRelation {
 
 	@Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -24,9 +24,9 @@ public class Transfer {
     private String receiver;
     private long amount;  // 해당 입출력의 금액
 
-    public Transfer() {}
+    public WalletRelation() {}
 
-    public Transfer(Transaction transaction, String sender, String receiver, long amount) {
+    public WalletRelation(Transaction transaction, String sender, String receiver, long amount) {
         this.transaction = transaction;
         this.sender = sender;
         this.receiver = receiver;
