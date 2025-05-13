@@ -7,8 +7,10 @@ package com.Django.TraceChain.controller;
 import com.Django.TraceChain.model.Transaction;
 import com.Django.TraceChain.model.Transfer;
 import com.Django.TraceChain.model.Wallet;
+import com.Django.TraceChain.service.DetectService;
 import com.Django.TraceChain.service.WalletService;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -20,10 +22,12 @@ import org.springframework.web.bind.annotation.*;
 public class Controller {
 
     private final WalletService walletService;
+    private final DetectService detectService;
 
     @Autowired
-    public Controller(WalletService walletService) {
+    public Controller(WalletService walletService, DetectService detectService) {
         this.walletService = walletService;
+        this.detectService = detectService;
     }
     
     private String detectChain(String address) {
@@ -127,5 +131,79 @@ public class Controller {
 
         return ResponseEntity.ok(html.toString());
     }
+    
+    @GetMapping(value = "/graph", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> graph() {
+        List<Wallet> wallets = walletService.getAllWallets();  // 전체 지갑 정보 가져오기
+
+        StringBuilder html = new StringBuilder();
+        html.append("<html><head><style>");
+        html.append("body { font-family: Arial, sans-serif; }");
+        html.append("ul { list-style-type: none; padding-left: 20px; }");
+        html.append("li { margin-bottom: 5px; }");
+        html.append("h2, h3 { color: #2c3e50; }");
+        html.append(".mixing-info { color: darkred; font-weight: bold; }");
+        html.append("</style></head><body>");
+        html.append("<h1>Wallet Graph View</h1>");
+
+        for (Wallet wallet : wallets) {
+            html.append("<h2>Wallet: ").append(wallet.getAddress()).append("</h2>");
+            html.append("<p>Balance: ").append(wallet.getBalance()).append("</p>");
+
+            // ➤ Mixing 패턴 출력
+            List<String> detectedPatterns = new ArrayList<>();
+            if (Boolean.TRUE.equals(wallet.getFixedAmountOutputPattern())) detectedPatterns.add("FixedAmountOutput");
+            if (Boolean.TRUE.equals(wallet.getMultiIOPattern())) detectedPatterns.add("MultiIO");
+            if (Boolean.TRUE.equals(wallet.getLoopingPattern())) detectedPatterns.add("Looping");
+            if (Boolean.TRUE.equals(wallet.getRelayerPattern())) detectedPatterns.add("Relayer");
+            if (Boolean.TRUE.equals(wallet.getPeelChainPattern())) detectedPatterns.add("PeelChain");
+
+            if (!detectedPatterns.isEmpty()) {
+                html.append("<p class='mixing-info'>Detected Mixing Patterns (")
+                    .append(wallet.getPatternCnt()).append("): ")
+                    .append(String.join(", ", detectedPatterns)).append("</p>");
+            } else {
+                html.append("<p class='mixing-info'>No Mixing Patterns Detected</p>");
+            }
+
+            // ➤ 트랜잭션 정보
+            List<Transaction> transactions = wallet.getTransactions();
+            html.append("<ul>");
+            for (Transaction tx : transactions) {
+                html.append("<li>");
+                html.append("<h3>TxID: ").append(tx.getTxID()).append("</h3>");
+                html.append("<p>Amount: ").append(tx.getAmount()).append("<br>");
+                html.append("Timestamp: ").append(tx.getTimestamp()).append("</p>");
+
+                List<Transfer> transfers = tx.getTransfers();
+                html.append("<ul>");
+                for (Transfer transfer : transfers) {
+                    html.append("<li>");
+                    html.append("From: ").append(transfer.getSender() != null ? transfer.getSender() : "Unknown")
+                        .append(" → To: ").append(transfer.getReceiver() != null ? transfer.getReceiver() : "Unknown")
+                        .append(" | Amount: ").append(transfer.getAmount());
+                    html.append("</li>");
+                }
+                html.append("</ul>");
+                html.append("</li>");
+            }
+            html.append("</ul>");
+        }
+
+        html.append("</body></html>");
+
+        return ResponseEntity.ok(html.toString());
+    }
+
+    
+    @GetMapping("/detect")
+    public String detectMixingPatterns() {
+    	
+    	List<Wallet> wallets = walletService.getAllWallets();
+        detectService.runAllDetectors(wallets);
+
+        return "Mixing pattern detection completed.";
+    }
+
 
 }

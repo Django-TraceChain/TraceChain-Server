@@ -1,4 +1,4 @@
-package com.Django.TraceChain.Repository;
+package com.Django.TraceChain.repository;
 
 import com.Django.TraceChain.model.Transfer;
 import org.springframework.data.jpa.repository.JpaRepository;

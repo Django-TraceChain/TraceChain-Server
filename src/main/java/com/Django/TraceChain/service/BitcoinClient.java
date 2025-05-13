@@ -3,11 +3,11 @@
  */
 package com.Django.TraceChain.service;
 
-import com.Django.TraceChain.Repository.TransactionRepository;
-import com.Django.TraceChain.Repository.WalletRepository;
 import com.Django.TraceChain.model.Transaction;
 import com.Django.TraceChain.model.Transfer;
 import com.Django.TraceChain.model.Wallet;
+import com.Django.TraceChain.repository.TransactionRepository;
+import com.Django.TraceChain.repository.WalletRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 

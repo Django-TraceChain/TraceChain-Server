@@ -30,13 +30,13 @@ public class Wallet {
     private Boolean fixedAmountOutputPattern;
 
     @Column(nullable = true)
-    private Boolean ioMultiStructurePattern;
+    private Boolean multiIOPattern;
 
     @Column(nullable = true)
-    private Boolean circularStructurePattern;
+    private Boolean loopingPattern;
 
     @Column(nullable = true)
-    private Boolean relayerBasedWithdrawalPattern;
+    private Boolean relayerPattern;
 
     @Column(nullable = true)
     private Boolean peelChainPattern;
@@ -69,17 +69,17 @@ public class Wallet {
                   int type,
                   long balance,
                   Boolean fixedAmountOutputPattern,
-                  Boolean ioMultiStructurePattern,
-                  Boolean circularStructurePattern,
-                  Boolean relayerBasedWithdrawalPattern,
+                  Boolean multiIOPattern,
+                  Boolean loopingPattern,
+                  Boolean relayerPattern,
                   Boolean peelChainPattern, int patternCnt) {
         this.address = address;
         this.type = type;
         this.balance = balance;
         this.fixedAmountOutputPattern = fixedAmountOutputPattern;
-        this.ioMultiStructurePattern = ioMultiStructurePattern;
-        this.circularStructurePattern = circularStructurePattern;
-        this.relayerBasedWithdrawalPattern = relayerBasedWithdrawalPattern;
+        this.multiIOPattern = multiIOPattern;
+        this.loopingPattern = loopingPattern;
+        this.relayerPattern = relayerPattern;
         this.peelChainPattern = peelChainPattern;
         this.patternCnt = patternCnt;
     }
@@ -101,19 +101,19 @@ public class Wallet {
         this.fixedAmountOutputPattern = fixedAmountOutputPattern;
     }
 
-    public Boolean getIoMultiStructurePattern() { return ioMultiStructurePattern; }
-    public void setIoMultiStructurePattern(Boolean ioMultiStructurePattern) {
-        this.ioMultiStructurePattern = ioMultiStructurePattern;
+    public Boolean getMultiIOPattern() { return multiIOPattern; }
+    public void setMultiIOPattern(Boolean multiIOPattern) {
+        this.multiIOPattern = multiIOPattern;
     }
 
-    public Boolean getCircularStructurePattern() { return circularStructurePattern; }
-    public void setCircularStructurePattern(Boolean circularStructurePattern) {
-        this.circularStructurePattern = circularStructurePattern;
+    public Boolean getLoopingPattern() { return loopingPattern; }
+    public void setLoopingPattern(Boolean loopingPattern) {
+        this.loopingPattern = loopingPattern;
     }
 
-    public Boolean getRelayerBasedWithdrawalPattern() { return relayerBasedWithdrawalPattern; }
-    public void setRelayerBasedWithdrawalPattern(Boolean relayerBasedWithdrawalPattern) {
-        this.relayerBasedWithdrawalPattern = relayerBasedWithdrawalPattern;
+    public Boolean getRelayerPattern() { return relayerPattern; }
+    public void setRelayerPattern(Boolean relayerPattern) {
+        this.relayerPattern = relayerPattern;
     }
 
     public Boolean getPeelChainPattern() { return peelChainPattern; }
