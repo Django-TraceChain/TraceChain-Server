@@ -145,7 +145,86 @@ public class BitcoinClient implements ChainClient {
         return transactionList;
     }
 
-    
+
+
+    //getTransactions 오버로드 => 트랜잭션 개수 제한을 걸어두는 경우를 구현
+    public List<Transaction> getTransactions(String address, int limit) {
+        String token = accessToken.getAccessToken();
+        if (token == null) return Collections.emptyList();
+
+        Wallet wallet = walletRepository.findById(address)
+                .orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
+
+        RestTemplate restTemplate = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+        String url = apiUrl + "/address/" + address + "/txs";
+
+        List<Transaction> transactionList = new ArrayList<>();
+
+        try {
+            ResponseEntity<String> response = restTemplate.exchange(
+                    url, HttpMethod.GET, entity, String.class);
+            JsonNode rootArray = new ObjectMapper().readTree(response.getBody());
+
+            int count = 0;
+            for (JsonNode txNode : rootArray) {
+                if (count >= limit) break;
+
+                String txid = txNode.path("txid").asText();
+
+                Optional<Transaction> existing = transactionRepository.findById(txid);
+                if (existing.isPresent()) {
+                    transactionList.add(existing.get());
+                    continue;
+                }
+
+                long amount = 0;
+                for (JsonNode vout : txNode.path("vout")) {
+                    amount += (long) vout.path("value").asDouble();
+                }
+                LocalDateTime txTime = LocalDateTime.ofInstant(
+                        Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong()),
+                        ZoneOffset.UTC);
+
+                Transaction tx = new Transaction(txid, amount, txTime);
+                tx.setWallet(wallet);
+
+                for (JsonNode vin : txNode.path("vin")) {
+                    String sender = vin.path("prevout").path("scriptpubkey_address").asText(null);
+                    long val = vin.path("prevout").path("value").asLong(0);
+                    if (sender != null) {
+                        Transfer t = new Transfer(tx, sender, address, val);
+                        tx.addTransfer(t);
+                    }
+                }
+
+                for (JsonNode vout : txNode.path("vout")) {
+                    String receiver = vout.path("scriptpubkey_address").asText(null);
+                    long val = vout.path("value").asLong(0);
+                    if (receiver != null) {
+                        Transfer t = new Transfer(tx, address, receiver, val);
+                        tx.addTransfer(t);
+                    }
+                }
+
+                wallet.addTransaction(tx);  // 안전하게 관계 설정
+                transactionRepository.save(tx);
+                transactionList.add(tx);
+                count++;
+            }
+
+        } catch (Exception e) {
+            System.out.println("Bitcoin getTransactions (limited) error: " + e.getMessage());
+        }
+
+        return transactionList;
+    }
+
+
+
+
     public void traceTransactionsRecursive(String address, int depth, int maxDepth, Set<String> visited) {
         if (depth > maxDepth || visited.contains(address)) return;
 
@@ -170,6 +249,38 @@ public class BitcoinClient implements ChainClient {
         // 다음 단계 주소들에 대해 재귀 호출
         for (String next : nextAddresses) {
             traceTransactionsRecursive(next, depth + 1, maxDepth, visited);
+        }
+    }
+
+    // 비트코인에도 트랜잭션의 제한을 걸고 재귀탐색하는 기능 추가. api호출은 /trace-detailed
+    public void traceRecursiveDetailed(String address, int depth, int maxDepth,
+                                       Map<Integer, List<Wallet>> depthMap,
+                                       Set<String> visited) {
+        if (depth > maxDepth || visited.contains(address)) return;
+
+        visited.add(address);
+
+        List<Transaction> transactions = getTransactions(address, 10);
+        if (transactions.isEmpty()) return;
+
+        Wallet wallet = walletRepository.findById(address)
+                .orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
+
+        wallet.setTransactions(transactions);
+        depthMap.computeIfAbsent(depth, d -> new ArrayList<>()).add(wallet);
+
+        Set<String> nextAddresses = new HashSet<>();
+        for (Transaction tx : transactions) {
+            for (Transfer t : tx.getTransfers()) {
+                if (t.getSender() != null && !visited.contains(t.getSender()))
+                    nextAddresses.add(t.getSender());
+                if (t.getReceiver() != null && !visited.contains(t.getReceiver()))
+                    nextAddresses.add(t.getReceiver());
+            }
+        }
+
+        for (String next : nextAddresses) {
+            traceRecursiveDetailed(next, depth + 1, maxDepth, depthMap, visited);
         }
     }
 

@@ -41,6 +41,11 @@ public class WalletService {
     public List<Transaction> getTransactions(String chainType, String address) {
         return getClient(chainType).getTransactions(address);
     }
+
+    public List<Transaction> getTransactions(String chainType, String address, int limit) {
+        return getClient(chainType).getTransactions(address, limit);
+    } // 몇개를 가져올지 한계를 정해서 트랜잭션 가져오면 단계로 재귀를 돌려도 할만하지 않을까?
+
     
     public void traceTransactionsRecursive(String chainType, String address, int depth, int maxDepth, Set<String> visited) {
     	getClient(chainType).traceTransactionsRecursive(address, depth, maxDepth, visited);
@@ -49,5 +54,10 @@ public class WalletService {
     public List<Wallet> getAllWallets() {
         return walletRepository.findAll();
     }
-    
+
+    //재귀 탐색을 테스트하기 위함 =>/trac-detailed를 별도 추가하였음
+    public ChainClient resolveClient(String chainType) {
+        return getClient(chainType);
+    }
+
 }

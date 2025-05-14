@@ -12,6 +12,8 @@ import java.util.Set;
 public interface ChainClient {
     Wallet findAddress(String address);
     List<Transaction> getTransactions(String address);
+    List<Transaction> getTransactions(String address, int limit); // 오버로딩
+
     void traceTransactionsRecursive(String address, int depth, int maxDepth, Set<String> visited);
     boolean supports(String chainType); // 예: "bitcoin", "ethereum" 구분용
 }

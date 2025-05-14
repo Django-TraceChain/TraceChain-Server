@@ -7,12 +7,9 @@ package com.Django.TraceChain.controller;
 import com.Django.TraceChain.model.Transaction;
 import com.Django.TraceChain.model.Transfer;
 import com.Django.TraceChain.model.Wallet;
-import com.Django.TraceChain.service.DetectService;
-import com.Django.TraceChain.service.WalletService;
+import com.Django.TraceChain.service.*;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
@@ -204,6 +201,84 @@ public class Controller {
 
         return "Mixing pattern detection completed.";
     }
+
+
+
+    // 믹싱을 탐지하는데 최근 트렌잭션을 기준으로 10개 정도만 가져오면 깊이로 순회를 해도 어느정도 할만하지 않을까? 라는 생각을 토대로
+    //해당 api를 만듬
+    //사용예시:
+    @GetMapping("/trace-detailed")
+    public ResponseEntity<String> traceDetailed(@RequestParam String address,
+                                                @RequestParam String chain,
+                                                @RequestParam(defaultValue = "0") int depth,
+                                                @RequestParam(defaultValue = "2") int maxDepth) {
+        Set<String> visited = new HashSet<>();
+        Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
+
+        ChainClient client = walletService.resolveClient(chain);
+
+        if (client instanceof EthereumClient ethClient) {
+            ethClient.traceRecursiveDetailed(address, depth, maxDepth, depthMap, visited);
+        } else if (client instanceof BitcoinClient btcClient) {
+            btcClient.traceRecursiveDetailed(address, depth, maxDepth, depthMap, visited);
+        } else {
+            return ResponseEntity.badRequest().body("<html><body><h3>Unsupported chain type</h3></body></html>");
+        }
+
+        StringBuilder html = new StringBuilder();
+        html.append("<html><head><style>");
+        html.append("body { font-family: Arial; background-color: #f9f9f9; }");
+        html.append("table { border-collapse: collapse; width: 100%; margin-bottom: 30px; }");
+        html.append("th, td { border: 1px solid #ccc; padding: 8px; text-align: left; font-size: 14px; }");
+        html.append("th { background-color: #f2f2f2; }");
+        html.append("h2, h3 { color: #333; }");
+        html.append("</style></head><body>");
+
+        html.append("<h2>Detailed Trace for Address: ").append(address).append("</h2>");
+        html.append("<p>Total Unique Addresses Visited: ").append(visited.size()).append("</p>");
+
+        for (Map.Entry<Integer, List<Wallet>> entry : depthMap.entrySet()) {
+            html.append("<h3>Depth ").append(entry.getKey()).append("</h3>");
+            html.append("<table>");
+            html.append("<tr><th>Sender</th><th>TxID</th><th>Receiver</th><th>Amount (wei)</th><th>Direction</th><th>Timestamp</th></tr>");
+
+            for (Wallet w : entry.getValue()) {
+                List<Transaction> txs = w.getTransactions();
+                if (txs == null || txs.isEmpty()) continue;
+
+                for (Transaction tx : txs) {
+                    for (Transfer t : tx.getTransfers()) {
+                        html.append("<tr>");
+                        html.append("<td>").append(shortWithTooltip(t.getSender())).append("</td>");
+                        html.append("<td>").append(shortWithTooltip(tx.getTxID())).append("</td>");
+                        html.append("<td>").append(shortWithTooltip(t.getReceiver())).append("</td>");
+                        html.append("<td>").append(t.getAmount()).append("</td>");
+
+                        String direction = "-";
+                        if (w.getAddress().equalsIgnoreCase(t.getReceiver())) direction = "IN";
+                        else if (w.getAddress().equalsIgnoreCase(t.getSender())) direction = "OUT";
+
+                        html.append("<td>").append(direction).append("</td>");
+                        html.append("<td>").append(tx.getTimestamp() != null ? tx.getTimestamp().toString() : "-").append("</td>");
+                        html.append("</tr>");
+                    }
+                }
+            }
+
+            html.append("</table>");
+        }
+
+        html.append("</body></html>");
+        return ResponseEntity.ok(html.toString());
+    }
+
+    private String shortWithTooltip(String full) {
+        if (full == null || full.length() <= 12) return full;
+        String shorted = full.substring(0, 6) + "..." + full.substring(full.length() - 4);
+        return "<abbr title=\"" + full + "\">" + shorted + "</abbr>";
+    }
+
+
 
 
 }
