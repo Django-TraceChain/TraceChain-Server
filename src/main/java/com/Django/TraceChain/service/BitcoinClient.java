@@ -164,8 +164,7 @@ public class BitcoinClient implements ChainClient {
         List<Transaction> transactionList = new ArrayList<>();
 
         try {
-            ResponseEntity<String> response = restTemplate.exchange(
-                    url, HttpMethod.GET, entity, String.class);
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
             JsonNode rootArray = new ObjectMapper().readTree(response.getBody());
 
             int count = 0;
@@ -185,8 +184,7 @@ public class BitcoinClient implements ChainClient {
                     amount += (long) vout.path("value").asDouble();
                 }
                 LocalDateTime txTime = LocalDateTime.ofInstant(
-                        Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong()),
-                        ZoneOffset.UTC);
+                        Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong()), ZoneOffset.UTC);
 
                 Transaction tx = new Transaction(txid, amount, txTime);
                 tx.setWallet(wallet);
@@ -209,7 +207,7 @@ public class BitcoinClient implements ChainClient {
                     }
                 }
 
-                wallet.addTransaction(tx);  // 안전하게 관계 설정
+                // ✅ 여기에선 setWallet만으로 충분함
                 transactionRepository.save(tx);
                 transactionList.add(tx);
                 count++;
@@ -221,6 +219,7 @@ public class BitcoinClient implements ChainClient {
 
         return transactionList;
     }
+
 
 
 

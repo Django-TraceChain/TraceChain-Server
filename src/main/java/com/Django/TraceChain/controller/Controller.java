@@ -92,7 +92,53 @@ public class Controller {
         html.append("</body></html>");
         return ResponseEntity.ok(html.toString());
     }
-    
+
+    // 트랜잭션 개수를 제한해서 검색하는 놈 추가
+    @GetMapping(value = "/search-limited", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> searchLimited(@RequestParam String address,
+                                                @RequestParam(defaultValue = "bitcoin") String chain,
+                                                @RequestParam(defaultValue = "10") int limit) {
+        if (address == null || address.isEmpty()) {
+            return ResponseEntity.badRequest().body("<html><body><h3>Address is required.</h3></body></html>");
+        }
+
+        Wallet wallet = walletService.findAddress(chain, address);
+        if (wallet == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("<html><body><h3>Wallet not found or API error.</h3></body></html>");
+        }
+
+        List<Transaction> txList = walletService.getTransactions(chain, address, limit);
+
+        StringBuilder html = new StringBuilder();
+        html.append("<html><body>");
+        html.append("<h2>Wallet Address: ").append(wallet.getAddress()).append("</h2>");
+        html.append("<p>Balance: ").append(wallet.getBalance()).append("</p>");
+        html.append("<h3>Recent ").append(limit).append(" Transactions:</h3>");
+
+        for (Transaction tx : txList) {
+            html.append("<div style='margin-bottom:15px;'>");
+            html.append("<strong>TxID:</strong> ").append(tx.getTxID()).append("<br>");
+            html.append("<strong>Amount:</strong> ").append(tx.getAmount()).append("<br>");
+            html.append("<strong>Timestamp:</strong> ").append(tx.getTimestamp()).append("<br>");
+            html.append("<ul>");
+            for (Transfer t : tx.getTransfers()) {
+                html.append("<li>");
+                html.append("From: ").append(t.getSender()).append(" → ");
+                html.append("To: ").append(t.getReceiver()).append(" | ");
+                html.append("Amount: ").append(t.getAmount());
+                html.append("</li>");
+            }
+            html.append("</ul></div>");
+        }
+
+        html.append("</body></html>");
+        return ResponseEntity.ok(html.toString());
+    }
+
+
+
+
     @GetMapping(value = "/trace", produces = MediaType.TEXT_HTML_VALUE)
     public ResponseEntity<String> trace(@RequestParam(required = false) String address,
                                         @RequestParam(defaultValue = "bitcoin") String chain,
