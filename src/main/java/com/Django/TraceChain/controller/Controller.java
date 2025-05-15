@@ -152,8 +152,8 @@ public class Controller {
 
             // ➤ Mixing 패턴 출력
             List<String> detectedPatterns = new ArrayList<>();
-            if (Boolean.TRUE.equals(wallet.getFixedAmountOutputPattern())) detectedPatterns.add("FixedAmountOutput");
-            if (Boolean.TRUE.equals(wallet.getMultiIOPattern())) detectedPatterns.add("MultiIO");
+            if (Boolean.TRUE.equals(wallet.getFixedAmountPattern())) detectedPatterns.add("Fixed Amount");
+            if (Boolean.TRUE.equals(wallet.getMultiIOPattern())) detectedPatterns.add("Multi-IO");
             if (Boolean.TRUE.equals(wallet.getLoopingPattern())) detectedPatterns.add("Looping");
             if (Boolean.TRUE.equals(wallet.getRelayerPattern())) detectedPatterns.add("Relayer");
             if (Boolean.TRUE.equals(wallet.getPeelChainPattern())) detectedPatterns.add("PeelChain");

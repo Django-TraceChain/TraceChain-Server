@@ -27,7 +27,7 @@ public class Wallet {
 
     // 믹싱 패턴 탐지 결과 (nullable로 설정)
     @Column(nullable = true)
-    private Boolean fixedAmountOutputPattern;
+    private Boolean fixedAmountPattern;
 
     @Column(nullable = true)
     private Boolean multiIOPattern;
@@ -68,7 +68,7 @@ public class Wallet {
     public Wallet(String address,
                   int type,
                   long balance,
-                  Boolean fixedAmountOutputPattern,
+                  Boolean fixedAmountPattern,
                   Boolean multiIOPattern,
                   Boolean loopingPattern,
                   Boolean relayerPattern,
@@ -76,7 +76,7 @@ public class Wallet {
         this.address = address;
         this.type = type;
         this.balance = balance;
-        this.fixedAmountOutputPattern = fixedAmountOutputPattern;
+        this.fixedAmountPattern = fixedAmountPattern;
         this.multiIOPattern = multiIOPattern;
         this.loopingPattern = loopingPattern;
         this.relayerPattern = relayerPattern;
@@ -96,9 +96,9 @@ public class Wallet {
     public long getBalance() { return balance; }
     public void setBalance(long balance) { this.balance = balance; }
 
-    public Boolean getFixedAmountOutputPattern() { return fixedAmountOutputPattern; }
-    public void setFixedAmountOutputPattern(Boolean fixedAmountOutputPattern) {
-        this.fixedAmountOutputPattern = fixedAmountOutputPattern;
+    public Boolean getFixedAmountPattern() { return fixedAmountPattern; }
+    public void setFixedAmountPattern(Boolean fixedAmountPattern) {
+        this.fixedAmountPattern = fixedAmountPattern;
     }
 
     public Boolean getMultiIOPattern() { return multiIOPattern; }
