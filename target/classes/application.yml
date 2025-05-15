@@ -1,10 +1,10 @@
 blockstream:
-  client-id: Input your ID
-  client-secret: Input your secret
+  client-id: c4d1836f-0950-4289-a2ed-c08865ce279e
+  client-secret: szK33e9oIrITq52FssCpWuIjXTP7I6zS
   token-url: https://login.blockstream.com/realms/blockstream-public/protocol/openid-connect/token
   api-url: https://enterprise.blockstream.info/api
 
 
 etherscan:
   api-key: MJQ2CWTI2395PZGY75ZQ8N6Y1NS53JVH8G
-  base-url: https://api.etherscan.io/api
+  api-url: https://api.etherscan.io/api
