@@ -26,5 +26,4 @@ replay_pid*
 src/main/resources/application.properties
 src/main/resources/application.yml
 
-target/classes/application.properties
-target/classes/application.yml
+

@@ -1,5 +1,0 @@
-blockstream:
-  client-id: Input your ID
-  client-secret: Input your secret
-  token-url: https://login.blockstream.com/realms/blockstream-public/protocol/openid-connect/token
-  api-url: https://enterprise.blockstream.info/api
