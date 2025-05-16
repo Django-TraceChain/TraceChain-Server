@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 @Entity
 @Table(name = "transactions")
@@ -77,5 +78,21 @@ public class Transaction {
         for (Transfer rel : transfers) {
             rel.setTransaction(this);
         }
+    }
+
+
+    //중복삽입문제발생해서 해결노력중
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Transaction)) return false;
+        Transaction that = (Transaction) o;
+        return txID != null && txID.equals(that.txID);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(txID);
     }
 }

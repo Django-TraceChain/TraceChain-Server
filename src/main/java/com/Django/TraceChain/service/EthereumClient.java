@@ -46,7 +46,6 @@ public class EthereumClient implements ChainClient {
     public Wallet findAddress(String address) {
         try {
             String url = apiUrl + "?module=account&action=balance&address=" + address + "&tag=latest&apikey=" + apiKey;
-
             RestTemplate restTemplate = new RestTemplate();
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
 
@@ -63,10 +62,9 @@ public class EthereumClient implements ChainClient {
         }
     }
 
-
     @Override
     public List<Transaction> getTransactions(String address) {
-        List<Transaction> txList = new ArrayList<>();
+        Map<String, Transaction> txMap = new LinkedHashMap<>();
         try {
             String url = apiUrl
                     + "?module=account"
@@ -81,55 +79,38 @@ public class EthereumClient implements ChainClient {
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
             JsonNode result = new ObjectMapper().readTree(response.getBody()).path("result");
 
-            if (!result.isArray()) return txList;
+            if (!result.isArray()) return new ArrayList<>();
 
             Wallet wallet = walletRepository.findById(address)
-                    .orElseGet(() -> walletRepository.save(new Wallet(address, 2, 0L)));
-
-            Set<String> existingTxIDs = wallet.getTransactions().stream()
-                    .map(Transaction::getTxID)
-                    .collect(Collectors.toSet());
+                    .orElseGet(() -> new Wallet(address, 2, 0L));
 
             for (JsonNode txNode : result) {
                 String txHash = txNode.path("hash").asText();
-                if (existingTxIDs.contains(txHash)) continue;
+                if (txMap.containsKey(txHash)) continue;
 
                 long value = new BigDecimal(txNode.path("value").asText()).longValue();
                 long timestamp = txNode.path("timeStamp").asLong();
-
-                LocalDateTime time = LocalDateTime.ofInstant(
-                        Instant.ofEpochSecond(timestamp), ZoneOffset.UTC
-                );
+                LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), ZoneOffset.UTC);
 
                 Transaction tx = new Transaction(txHash, value, time);
-
-                // 🔁 양방향 관계 설정
-                wallet.addTransaction(tx);  // Wallet 쪽에 추가
-                tx.getWallets().add(wallet);  // Transaction 쪽에도 추가
-
-                // Transfer 설정
-                String from = txNode.path("from").asText();
-                String to = txNode.path("to").asText();
-                Transfer t = new Transfer(tx, from, to, value);
+                Transfer t = new Transfer(tx, txNode.path("from").asText(), txNode.path("to").asText(), value);
                 tx.addTransfer(t);
+                tx.getWallets().add(wallet);
+                wallet.addTransaction(tx);
 
-                txList.add(tx);
+                txMap.put(txHash, tx);
             }
-
-            transactionRepository.saveAll(txList);  // 한번에 저장
-            walletRepository.save(wallet);
 
         } catch (Exception e) {
             System.out.println("Ethereum getTransactions error: " + e.getMessage());
         }
-        return txList;
-    }
 
+        return new ArrayList<>(txMap.values());
+    }
 
     @Override
     public List<Transaction> getTransactions(String address, int limit) {
-        List<Transaction> txList = new ArrayList<>();
-
+        Map<String, Transaction> txMap = new LinkedHashMap<>();
         try {
             String url = apiUrl
                     + "?module=account"
@@ -146,83 +127,47 @@ public class EthereumClient implements ChainClient {
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
             JsonNode result = new ObjectMapper().readTree(response.getBody()).path("result");
 
-            if (!result.isArray()) return txList;
+            if (!result.isArray()) return new ArrayList<>();
 
             Wallet wallet = walletRepository.findById(address)
-                    .orElseGet(() -> walletRepository.save(new Wallet(address, 2, 0L)));
+                    .orElseGet(() -> new Wallet(address, 2, 0L));
 
             for (JsonNode txNode : result) {
                 String txHash = txNode.path("hash").asText();
+                if (txMap.containsKey(txHash)) continue;
 
-                // 🔍 트랜잭션 중복 확인
-                Transaction tx = transactionRepository.findById(txHash).orElse(null);
-                if (tx == null) {
-                    long value = new BigDecimal(txNode.path("value").asText()).longValue();
-                    long timestamp = txNode.path("timeStamp").asLong();
-                    LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), ZoneOffset.UTC);
+                long value = new BigDecimal(txNode.path("value").asText()).longValue();
+                long timestamp = txNode.path("timeStamp").asLong();
+                LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), ZoneOffset.UTC);
 
-                    tx = new Transaction(txHash, value, time);
-                }
+                Transaction tx = new Transaction(txHash, value, time);
+                Transfer transfer = new Transfer(tx, txNode.path("from").asText(), txNode.path("to").asText(), value);
+                tx.addTransfer(transfer);
+                tx.getWallets().add(wallet);
+                wallet.addTransaction(tx);
 
-                // 🔁 양방향 관계 설정
-                if (!tx.getWallets().contains(wallet)) {
-                    tx.getWallets().add(wallet);
-                }
-                if (!wallet.getTransactions().contains(tx)) {
-                    wallet.addTransaction(tx);
-                }
-
-                // 💡 중복 Transfer 체크
-                final String sender = txNode.path("from").asText();
-                final String receiver = txNode.path("to").asText();
-                final long amount = tx.getAmount();
-
-                boolean transferExists = tx.getTransfers().stream().anyMatch(t ->
-                        sender.equals(t.getSender()) &&
-                                receiver.equals(t.getReceiver()) &&
-                                t.getAmount() == amount
-                );
-
-                if (!transferExists) {
-                    Transfer transfer = new Transfer(tx, sender, receiver, amount);
-                    tx.addTransfer(transfer);
-                }
-
-                transactionRepository.save(tx);
-                txList.add(tx);
+                txMap.put(txHash, tx);
             }
-
-            walletRepository.save(wallet);
 
         } catch (Exception e) {
             System.out.println("Ethereum getTransactions error: " + e.getMessage());
         }
 
-        return txList;
+        return new ArrayList<>(txMap.values());
     }
-
-
-
-
 
     @Override
     public void traceTransactionsRecursive(String address, int depth, int maxDepth, Set<String> visited) {
-        int limit = 10;
-
         if (depth > maxDepth || visited.contains(address)) return;
         visited.add(address);
 
-        List<Transaction> transactions = getTransactions(address, limit);
-        Set<String> nextAddresses = new HashSet<>();
+        List<Transaction> transactions = getTransactions(address, 10);
 
+        Set<String> nextAddresses = new HashSet<>();
         for (Transaction tx : transactions) {
-            for (Transfer transfer : tx.getTransfers()) {
-                if (transfer.getSender() != null && !visited.contains(transfer.getSender())) {
-                    nextAddresses.add(transfer.getSender());
-                }
-                if (transfer.getReceiver() != null && !visited.contains(transfer.getReceiver())) {
-                    nextAddresses.add(transfer.getReceiver());
-                }
+            for (Transfer t : tx.getTransfers()) {
+                if (t.getSender() != null && !visited.contains(t.getSender())) nextAddresses.add(t.getSender());
+                if (t.getReceiver() != null && !visited.contains(t.getReceiver())) nextAddresses.add(t.getReceiver());
             }
         }
 
@@ -230,7 +175,6 @@ public class EthereumClient implements ChainClient {
             traceTransactionsRecursive(next, depth + 1, maxDepth, visited);
         }
     }
-
 
     @Transactional
     public void traceRecursiveDetailed(String address, int depth, int maxDepth,
@@ -245,45 +189,31 @@ public class EthereumClient implements ChainClient {
         Wallet wallet = walletRepository.findById(address)
                 .orElseGet(() -> walletRepository.save(new Wallet(address, 2, 0L)));
 
-        // 💡 중복 방지: 기존 트랜잭션 ID 모음
         Set<String> existingTxIDs = wallet.getTransactions().stream()
                 .map(Transaction::getTxID)
                 .collect(Collectors.toSet());
 
         for (Transaction tx : transactions) {
-            // 🔁 트랜잭션이 wallet에 없으면 추가
             if (!existingTxIDs.contains(tx.getTxID())) {
                 wallet.addTransaction(tx);
             }
-
-            // 🔁 wallet <-> tx 연결
             if (!tx.getWallets().contains(wallet)) {
                 tx.getWallets().add(wallet);
             }
-
-            // 💡 Transfer 객체에도 연결 유지
-            if (tx.getTransfers() != null) {
-                for (Transfer t : tx.getTransfers()) {
-                    t.setTransaction(tx);
-                }
+            for (Transfer t : tx.getTransfers()) {
+                t.setTransaction(tx);
             }
         }
 
-        // 🔐 저장 (세션 충돌 방지용으로 saveAll)
         transactionRepository.saveAll(transactions);
         walletRepository.save(wallet);
         depthMap.computeIfAbsent(depth, d -> new ArrayList<>()).add(wallet);
 
-        // 🔁 다음 주소들로 재귀
         Set<String> nextAddresses = new HashSet<>();
         for (Transaction tx : transactions) {
             for (Transfer t : tx.getTransfers()) {
-                if (t.getSender() != null && !visited.contains(t.getSender())) {
-                    nextAddresses.add(t.getSender());
-                }
-                if (t.getReceiver() != null && !visited.contains(t.getReceiver())) {
-                    nextAddresses.add(t.getReceiver());
-                }
+                if (t.getSender() != null && !visited.contains(t.getSender())) nextAddresses.add(t.getSender());
+                if (t.getReceiver() != null && !visited.contains(t.getReceiver())) nextAddresses.add(t.getReceiver());
             }
         }
 
@@ -291,5 +221,4 @@ public class EthereumClient implements ChainClient {
             traceRecursiveDetailed(next, depth + 1, maxDepth, depthMap, visited);
         }
     }
-
 }
