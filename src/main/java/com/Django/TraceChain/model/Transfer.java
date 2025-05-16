@@ -12,7 +12,7 @@ public class Transfer {
 
     // 이 관계가 속한 트랜잭션 (N:1)
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "tx_id", referencedColumnName = "tx_id", nullable = false)
+    @JoinColumn(name = "transaction_id", referencedColumnName = "transaction_id", nullable = false)
     private Transaction transaction;
 
     @Column(nullable = false)
@@ -29,13 +29,13 @@ public class Transfer {
 
     // 전체 필드 초기화 생성자
     public Transfer(Transaction transaction,
-                          String sender,
-                          String receiver,
-                          long amount) {
+                    String sender,
+                    String receiver,
+                    long amount) {
         this.transaction = transaction;
-        this.sender      = sender;
-        this.receiver    = receiver;
-        this.amount      = amount;
+        this.sender = sender;
+        this.receiver = receiver;
+        this.amount = amount;
     }
 
     // Getter / Setter

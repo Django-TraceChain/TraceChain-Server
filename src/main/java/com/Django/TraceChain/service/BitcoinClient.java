@@ -1,6 +1,3 @@
-/*
- * WalletService에게 전달받은 주소를 검색하고, 해당 주소의 트랜잭션들을 저장
- */
 package com.Django.TraceChain.service;
 
 import com.Django.TraceChain.model.Transaction;
@@ -10,11 +7,11 @@ import com.Django.TraceChain.repository.TransactionRepository;
 import com.Django.TraceChain.repository.WalletRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Instant;
@@ -74,81 +71,60 @@ public class BitcoinClient implements ChainClient {
 		}
 	}
 
-	@Override
-	public List<Transaction> getTransactions(String address) {
-		String token = accessToken.getAccessToken();
-		if (token == null) return Collections.emptyList();
+	private Transaction createOrGetTransaction(JsonNode txNode, String ownerAddress) {
+	    String txid = txNode.path("txid").asText();
 
-		// 1) Wallet 조회 또는 생성
-		Wallet wallet = walletRepository.findById(address)
-				.orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
+	    Optional<Transaction> existingTxOpt = transactionRepository.findById(txid);
+	    if (existingTxOpt.isPresent()) {
+	        return existingTxOpt.get();  // 기존 트랜잭션 재사용 (저장하지 말 것)
+	    }
 
-		RestTemplate restTemplate = new RestTemplate();
-		HttpHeaders headers = new HttpHeaders();
-		headers.setBearerAuth(token);
-		HttpEntity<Void> entity = new HttpEntity<>(headers);
-		String url = apiUrl + "/address/" + address + "/txs";
+	    long amount = 0;
+	    for (JsonNode vout : txNode.path("vout")) {
+	        amount += (long) vout.path("value").asDouble();
+	    }
+	    LocalDateTime txTime = LocalDateTime.ofInstant(
+	            Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong()), ZoneOffset.UTC);
 
-		List<Transaction> transactionList = new ArrayList<>();
+	    Transaction tx = new Transaction(txid, amount, txTime);
+	    tx.getTransfers().clear();
 
-		try {
-			ResponseEntity<String> response = restTemplate.exchange(
-					url, HttpMethod.GET, entity, String.class);
-			JsonNode rootArray = new ObjectMapper().readTree(response.getBody());
+	    for (JsonNode vin : txNode.path("vin")) {
+	        String sender = vin.path("prevout").path("scriptpubkey_address").asText(null);
+	        long val = vin.path("prevout").path("value").asLong(0);
+	        if (sender == null) sender = ownerAddress != null ? ownerAddress : "unknown";
+	        Transfer t = new Transfer(tx, sender, null, val);
+	        tx.addTransfer(t);
+	    }
 
-			for (JsonNode txNode : rootArray) {
-				// 2) Transaction 객체 생성 및 Wallet 연결
-				String txid = txNode.path("txid").asText();
-				long amount = 0;
-				for (JsonNode vout : txNode.path("vout")) {
-					amount += (long) vout.path("value").asDouble();
-				}
-				LocalDateTime txTime = LocalDateTime.ofInstant(
-						Instant.ofEpochSecond(
-								txNode.path("status").path("block_time").asLong()),
-						ZoneOffset.UTC
-						);
+	    for (JsonNode vout : txNode.path("vout")) {
+	        String receiver = vout.path("scriptpubkey_address").asText(null);
+	        long val = vout.path("value").asLong(0);
+	        if (receiver == null) receiver = ownerAddress != null ? ownerAddress : "unknown";
+	        Transfer t = new Transfer(tx, null, receiver, val);
+	        tx.addTransfer(t);
+	    }
 
-				Transaction tx = new Transaction(txid, amount, txTime);
-				tx.setWallet(wallet);
+	    for (Transfer t : tx.getTransfers()) {
+	        if (t.getSender() == null && t.getReceiver() != null) {
+	            t.setSender(ownerAddress != null ? ownerAddress : "unknown");
+	        }
+	        if (t.getReceiver() == null && t.getSender() != null) {
+	            t.setReceiver(ownerAddress != null ? ownerAddress : "unknown");
+	        }
+	    }
 
-				// 3) 입력(vin) 관계 생성
-				for (JsonNode vin : txNode.path("vin")) {
-					String sender = vin.path("prevout")
-							.path("scriptpubkey_address")
-							.asText(null);
-					long val = vin.path("prevout").path("value").asLong(0);
-					if (sender != null) {
-						Transfer t = new Transfer(tx, sender, address, val);
-						tx.addTransfer(t);
-					}
-				}
-
-				// 4) 출력(vout) 관계 생성
-				for (JsonNode vout : txNode.path("vout")) {
-					String receiver = vout.path("scriptpubkey_address")
-							.asText(null);
-					long val = vout.path("value").asLong(0);
-					if (receiver != null) {
-						Transfer t = new Transfer(tx, address, receiver, val);
-						tx.addTransfer(t);
-					}
-				}
-
-				// 5) 저장 (cascade로 Transfer들도 함께 저장)
-				transactionRepository.save(tx);
-				transactionList.add(tx);
-			}
-		} catch (Exception e) {
-			System.out.println("Bitcoin getTransactions error: " + e.getMessage());
-		}
-
-		return transactionList;
+	    return tx;
 	}
 
 
 
-	//getTransactions 오버로드 => 트랜잭션 개수 제한을 걸어두는 경우를 구현
+	@Override
+	public List<Transaction> getTransactions(String address) {
+		return getTransactions(address, Integer.MAX_VALUE);
+	}
+
+	@Override
 	public List<Transaction> getTransactions(String address, int limit) {
 		String token = accessToken.getAccessToken();
 		if (token == null) return Collections.emptyList();
@@ -172,174 +148,139 @@ public class BitcoinClient implements ChainClient {
 			for (JsonNode txNode : rootArray) {
 				if (count >= limit) break;
 
-				String txid = txNode.path("txid").asText();
+				Transaction tx = createOrGetTransaction(txNode, address);
 
-				Optional<Transaction> existing = transactionRepository.findById(txid);
-				if (existing.isPresent()) {
-					transactionList.add(existing.get());
-					continue;
+				// 관계 설정만 하고 저장은 나중에
+				if (!wallet.getTransactions().contains(tx)) {
+					wallet.addTransaction(tx);
 				}
-
-				long amount = 0;
-				for (JsonNode vout : txNode.path("vout")) {
-					amount += (long) vout.path("value").asDouble();
+				if (!tx.getWallets().contains(wallet)) {
+					tx.getWallets().add(wallet);
 				}
-				LocalDateTime txTime = LocalDateTime.ofInstant(
-						Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong()), ZoneOffset.UTC);
-
-				Transaction tx = new Transaction(txid, amount, txTime);
-				tx.setWallet(wallet);
-
-				for (JsonNode vin : txNode.path("vin")) {
-					String sender = vin.path("prevout").path("scriptpubkey_address").asText(null);
-					long val = vin.path("prevout").path("value").asLong(0);
-					if (sender != null) {
-						Transfer t = new Transfer(tx, sender, address, val);
-						tx.addTransfer(t);
-					}
-				}
-
-				for (JsonNode vout : txNode.path("vout")) {
-					String receiver = vout.path("scriptpubkey_address").asText(null);
-					long val = vout.path("value").asLong(0);
-					if (receiver != null) {
-						Transfer t = new Transfer(tx, address, receiver, val);
-						tx.addTransfer(t);
-					}
-				}
-
-				// ✅ 여기에선 setWallet만으로 충분함
-				transactionRepository.save(tx);
+				
 				transactionList.add(tx);
 				count++;
 			}
+			
+			// 🟡 모든 트랜잭션을 저장하기 전에 출력
+			System.out.println("\n[DEBUG] Transactions to be saved:");
+			for (Transaction t : transactionList) {
+				System.out.println("TxID: " + t.getTxID());
+				System.out.println("  Associated wallets:");
+				for (Wallet w : t.getWallets()) {
+					System.out.println("    - " + w.getAddress());
+				}
+			}
+
+			// 🟢 출력이 끝난 뒤에 저장
+			transactionRepository.saveAll(transactionList);
+			walletRepository.save(wallet);
 
 		} catch (Exception e) {
-			System.out.println("Bitcoin getTransactions (limited) error: " + e.getMessage());
+			System.out.println("Bitcoin getTransactions error: " + e.getMessage());
 		}
 
 		return transactionList;
 	}
 
+
+
+	@Transactional
 	public void traceTransactionsRecursive(String address, int depth, int maxDepth, Set<String> visited) {
-		if (depth > maxDepth || visited.contains(address)) return;
-		visited.add(address);
+	    if (depth > maxDepth || visited.contains(address)) return;
+	    visited.add(address);
+	    System.out.println("[trace] Depth: " + depth + ", Address: " + address);
 
-		System.out.println("[trace] Depth: " + depth + ", Address: " + address);
+	    Wallet wallet = walletRepository.findById(address).orElseGet(() -> findAddress(address));
 
-		Wallet wallet = walletRepository.findById(address)
-				.orElseGet(() -> findAddress(address));
+	    List<Transaction> transactions = getTransactions(address); // getTransactions 내부에서 save 금지 전제
 
-		Set<String> existingTxIDs = wallet.getTransactions().stream()
-				.map(Transaction::getTxID)
-				.collect(Collectors.toSet());
+	    if (transactions == null || transactions.isEmpty()) {
+	        System.out.println("[trace] No transactions found for address: " + address);
+	        return;
+	    }
 
-		List<Transaction> transactions = getTransactions(address);
-		if (transactions == null) {
-			System.out.println("[trace] No transactions found for address: " + address);
-			return;
-		}
+	    System.out.println("[trace] Fetched transactions: " + transactions.size());
 
-		System.out.println("[trace] Fetched transactions: " + transactions.size());
+	    // Wallet과 Transaction 관계 설정
+	    for (Transaction tx : transactions) {
+	        if (!wallet.getTransactions().contains(tx)) wallet.addTransaction(tx);
+	        if (tx.getTransfers() != null) tx.getTransfers().forEach(t -> t.setTransaction(tx));
+	        if (!tx.getWallets().contains(wallet)) tx.getWallets().add(wallet);
+	    }
 
-		for (Transaction tx : transactions) {
-			if (existingTxIDs.contains(tx.getTxID()) || transactionRepository.existsById(tx.getTxID())) {
-				continue;
-			}
+	    // 저장: 모든 트랜잭션을 한번에 저장, Wallet 저장
+	    transactionRepository.saveAll(transactions);
+	    walletRepository.save(wallet);
 
-			wallet.addTransaction(tx);
+	    Set<String> nextAddresses = new HashSet<>();
+	    for (Transaction tx : transactions) {
+	        if (tx.getTransfers() == null) continue;
+	        tx.getTransfers().forEach(t -> {
+	            if (t.getSender() != null && !visited.contains(t.getSender())) nextAddresses.add(t.getSender());
+	            if (t.getReceiver() != null && !visited.contains(t.getReceiver())) nextAddresses.add(t.getReceiver());
+	        });
+	    }
 
-			if (tx.getTransfers() != null) {
-				for (Transfer t : tx.getTransfers()) {
-					t.setTransaction(tx);
-				}
-			}
-
-			transactionRepository.save(tx);
-		}
-
-		walletRepository.save(wallet);
-
-		// 이전: wallet.getTransactions() 사용 → 수정: 새로 가져온 transactions 기준으로
-		Set<String> nextAddresses = new HashSet<>();
-		for (Transaction tx : transactions) {
-			if (tx.getTransfers() == null) continue;
-
-			for (Transfer transfer : tx.getTransfers()) {
-				if (transfer.getSender() != null && !visited.contains(transfer.getSender())) {
-					nextAddresses.add(transfer.getSender());
-				}
-				if (transfer.getReceiver() != null && !visited.contains(transfer.getReceiver())) {
-					nextAddresses.add(transfer.getReceiver());
-				}
-			}
-		}
-
-		for (String next : nextAddresses) {
-			traceTransactionsRecursive(next, depth + 1, maxDepth, visited);
-		}
+	    for (String next : nextAddresses) {
+	        traceTransactionsRecursive(next, depth + 1, maxDepth, visited);
+	    }
 	}
 
+	@Transactional
 	public void traceRecursiveDetailed(String address, int depth, int maxDepth,
-			Map<Integer, List<Wallet>> depthMap,
-			Set<String> visited) {
-		if (depth > maxDepth || visited.contains(address)) return;
-		visited.add(address);
+	                                  Map<Integer, List<Wallet>> depthMap, Set<String> visited) {
+	    if (depth > maxDepth || visited.contains(address)) return;
+	    visited.add(address);
+	    System.out.println("[traceDetailed] Depth: " + depth + ", Address: " + address);
 
-		System.out.println("[traceDetailed] Depth: " + depth + ", Address: " + address);
+	    Wallet wallet = walletRepository.findById(address)
+	            .orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
 
-		Wallet wallet = walletRepository.findById(address)
-				.orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
+	    List<Transaction> transactions = getTransactions(address, 10);  // DB 조회된 Managed 객체여야 함
 
-		Set<String> existingTxIDs = wallet.getTransactions().stream()
-				.map(Transaction::getTxID)
-				.collect(Collectors.toSet());
+	    if (transactions == null || transactions.isEmpty()) {
+	        System.out.println("[traceDetailed] No transactions for: " + address);
+	        return;
+	    }
 
-		List<Transaction> transactions = getTransactions(address, 10);
-		if (transactions == null || transactions.isEmpty()) {
-			System.out.println("[traceDetailed] No transactions for: " + address);
-			return;
-		}
+	    System.out.println("[traceDetailed] Fetched transactions: " + transactions.size());
 
-		System.out.println("[traceDetailed] Fetched transactions: " + transactions.size());
+	    // wallet.getTransactions()에 있는 트랜잭션 ID 집합 생성 (중복 방지용)
+	    Set<String> existingTxIDs = wallet.getTransactions().stream()
+	            .map(Transaction::getTxID)
+	            .collect(Collectors.toSet());
 
-		for (Transaction tx : transactions) {
-			if (existingTxIDs.contains(tx.getTxID()) || transactionRepository.existsById(tx.getTxID())) {
-				continue;
-			}
+	    for (Transaction tx : transactions) {
+	        if (!existingTxIDs.contains(tx.getTxID())) {
+	            wallet.addTransaction(tx);
+	        }
+	        if (tx.getTransfers() != null) {
+	            tx.getTransfers().forEach(t -> t.setTransaction(tx));
+	        }
+	        if (!tx.getWallets().contains(wallet)) {
+	            tx.getWallets().add(wallet);
+	        }
+	    }
 
-			wallet.addTransaction(tx);
+	    transactionRepository.saveAll(transactions);  // saveAll로 한 번에 저장
+	    walletRepository.save(wallet);
 
-			if (tx.getTransfers() != null) {
-				for (Transfer t : tx.getTransfers()) {
-					t.setTransaction(tx);
-				}
-			}
+	    depthMap.computeIfAbsent(depth, d -> new ArrayList<>()).add(wallet);
 
-			transactionRepository.save(tx);
-		}
+	    Set<String> nextAddresses = new HashSet<>();
+	    for (Transaction tx : transactions) {
+	        if (tx.getTransfers() == null) continue;
+	        tx.getTransfers().forEach(t -> {
+	            if (t.getSender() != null && !visited.contains(t.getSender())) nextAddresses.add(t.getSender());
+	            if (t.getReceiver() != null && !visited.contains(t.getReceiver())) nextAddresses.add(t.getReceiver());
+	        });
+	    }
 
-		walletRepository.save(wallet);
-		depthMap.computeIfAbsent(depth, d -> new ArrayList<>()).add(wallet);
-
-		// 여기서도 wallet.getTransactions() 대신 방금 가져온 transactions 기준으로 다음 주소 추출
-		Set<String> nextAddresses = new HashSet<>();
-		for (Transaction tx : transactions) {
-			if (tx.getTransfers() == null) continue;
-
-			for (Transfer t : tx.getTransfers()) {
-				if (t.getSender() != null && !visited.contains(t.getSender())) {
-					nextAddresses.add(t.getSender());
-				}
-				if (t.getReceiver() != null && !visited.contains(t.getReceiver())) {
-					nextAddresses.add(t.getReceiver());
-				}
-			}
-		}
-
-		for (String next : nextAddresses) {
-			traceRecursiveDetailed(next, depth + 1, maxDepth, depthMap, visited);
-		}
+	    for (String next : nextAddresses) {
+	        traceRecursiveDetailed(next, depth + 1, maxDepth, depthMap, visited);
+	    }
 	}
+
 
 }

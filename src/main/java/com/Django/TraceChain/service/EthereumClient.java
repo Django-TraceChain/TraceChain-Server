@@ -10,10 +10,8 @@ import com.Django.TraceChain.repository.WalletRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
-import org.springframework.stereotype.Service;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
@@ -97,7 +95,11 @@ public class EthereumClient implements ChainClient {
                 );
 
                 Transaction tx = new Transaction(txHash, value, time);
-                tx.setWallet(wallet);
+
+                // 단일 Wallet 세팅 대신 wallets 리스트에 wallet 추가
+                if (!tx.getWallets().contains(wallet)) {
+                    tx.getWallets().add(wallet);
+                }
 
                 String from = txNode.path("from").asText();
                 String to = txNode.path("to").asText();
@@ -115,8 +117,7 @@ public class EthereumClient implements ChainClient {
         return txList;
     }
 
-    
-    //트랜잭션을 가져올때 개수를 정해서 가져오는 버전
+    // 트랜잭션 개수 제한 버전
     public List<Transaction> getTransactions(String address, int limit) {
         List<Transaction> txList = new ArrayList<>();
         try {
@@ -150,7 +151,11 @@ public class EthereumClient implements ChainClient {
                 );
 
                 Transaction tx = new Transaction(txHash, value, time);
-                tx.setWallet(wallet);
+
+                // wallets 리스트에 wallet 추가
+                if (!tx.getWallets().contains(wallet)) {
+                    tx.getWallets().add(wallet);
+                }
 
                 String from = txNode.path("from").asText();
                 String to = txNode.path("to").asText();
@@ -167,7 +172,6 @@ public class EthereumClient implements ChainClient {
         }
         return txList;
     }
-
 
     @Override
     public void traceTransactionsRecursive(String address, int depth, int maxDepth, Set<String> visited) {
@@ -199,8 +203,8 @@ public class EthereumClient implements ChainClient {
         }
     }
 
-    //사용 예시
-    //http://localhost:8080/trace-detailed?address=0xEbA88149813BEc1cCcccFDb0daCEFaaa5DE94cB1&chain=ethereum&depth=0&maxDepth=4
+    // 사용 예시
+    // http://localhost:8080/trace-detailed?address=0xEbA88149813BEc1cCcccFDb0daCEFaaa5DE94cB1&chain=ethereum&depth=0&maxDepth=4
     public void traceRecursiveDetailed(String address, int depth, int maxDepth,
                                        Map<Integer, List<Wallet>> depthMap,
                                        Set<String> visited) {
@@ -214,7 +218,7 @@ public class EthereumClient implements ChainClient {
         Wallet wallet = walletRepository.findById(address)
                 .orElseGet(() -> walletRepository.save(new Wallet(address, 2, 0L)));
 
-        wallet.setTransactions(transactions); // 👈 핵심
+        wallet.setTransactions(transactions); // 이 부분은 Wallet에서 단일 Transaction 리스트를 설정하는 부분으로 유지
 
         depthMap.computeIfAbsent(depth, d -> new ArrayList<>()).add(wallet);
 
@@ -232,8 +236,4 @@ public class EthereumClient implements ChainClient {
             traceRecursiveDetailed(next, depth + 1, maxDepth, depthMap, visited);
         }
     }
-
-
-
-
 }

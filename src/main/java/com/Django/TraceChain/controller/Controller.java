@@ -290,7 +290,14 @@ public class Controller {
 
             for (Wallet w : entry.getValue()) {
                 List<Transaction> txs = w.getTransactions();
-                if (txs == null || txs.isEmpty()) continue;
+
+                if (txs == null || txs.isEmpty()) {
+                    // 트랜잭션이 없더라도 주소 출력
+                    html.append("<tr>");
+                    html.append("<td colspan='6'>").append("No transactions for ").append(shortWithTooltip(w.getAddress())).append("</td>");
+                    html.append("</tr>");
+                    continue;
+                }
 
                 for (Transaction tx : txs) {
                     for (Transfer t : tx.getTransfers()) {
@@ -317,6 +324,7 @@ public class Controller {
         html.append("</body></html>");
         return ResponseEntity.ok(html.toString());
     }
+
 
     private String shortWithTooltip(String full) {
         if (full == null || full.length() <= 12) return full;

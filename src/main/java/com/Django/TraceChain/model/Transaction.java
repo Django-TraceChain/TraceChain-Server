@@ -10,7 +10,7 @@ import java.util.List;
 public class Transaction {
 
     @Id
-    @Column(name = "tx_id", nullable = false)
+    @Column(name = "transaction_id", nullable = false)
     private String txID;             // 트랜잭션 ID (기본키, NOT NULL)
 
     @Column(nullable = false)
@@ -19,10 +19,9 @@ public class Transaction {
     @Column(nullable = false)
     private LocalDateTime timestamp; // 트랜잭션 발생 시간 (NOT NULL)
 
-    // 이 트랜잭션이 속한 지갑 (N:1)
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "wallet_address", nullable = false)
-    private Wallet wallet;
+    // Wallet과 다대다 양방향 관계 (mappedBy Wallet.transactions)
+    @ManyToMany(mappedBy = "transactions", fetch = FetchType.LAZY)
+    private List<Wallet> wallets = new ArrayList<>();
 
     // 입출금 관계 리스트 (1:N)
     @OneToMany(mappedBy = "transaction",
@@ -36,8 +35,8 @@ public class Transaction {
 
     // 주요 필드만 초기화하는 생성자
     public Transaction(String txID, long amount, LocalDateTime timestamp) {
-        this.txID      = txID;
-        this.amount    = amount;
+        this.txID = txID;
+        this.amount = amount;
         this.timestamp = timestamp;
     }
 
@@ -45,6 +44,11 @@ public class Transaction {
     public void addTransfer(Transfer rel) {
         transfers.add(rel);
         rel.setTransaction(this);
+    }
+
+    public void removeTransfer(Transfer rel) {
+        transfers.remove(rel);
+        rel.setTransaction(null);
     }
 
     // Getter / Setter
@@ -57,8 +61,15 @@ public class Transaction {
     public LocalDateTime getTimestamp() { return timestamp; }
     public void setTimestamp(LocalDateTime timestamp) { this.timestamp = timestamp; }
 
-    public Wallet getWallet() { return wallet; }
-    public void setWallet(Wallet wallet) { this.wallet = wallet; }
+    public List<Wallet> getWallets() { return wallets; }
+    public void setWallets(List<Wallet> wallets) {
+        this.wallets = wallets;
+        for (Wallet wallet : wallets) {
+            if (!wallet.getTransactions().contains(this)) {
+                wallet.getTransactions().add(this);
+            }
+        }
+    }
 
     public List<Transfer> getTransfers() { return transfers; }
     public void setTransfers(List<Transfer> transfers) {

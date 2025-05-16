@@ -8,7 +8,9 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
-import jakarta.persistence.OneToMany;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.Table;
 
 @Entity
@@ -25,7 +27,6 @@ public class Wallet {
     @Column(nullable = false)
     private long balance;        // 보유 금액 (satoshi 등, NOT NULL)
 
-    // 믹싱 패턴 탐지 결과 (nullable로 설정)
     @Column(nullable = true)
     private Boolean fixedAmountPattern;
 
@@ -43,25 +44,34 @@ public class Wallet {
 
     @Column(nullable = true)
     private int patternCnt;
-    
- // 연관된 트랜잭션들 (1:N)
-    @OneToMany(mappedBy = "wallet",
-               cascade = CascadeType.ALL,
-               orphanRemoval = true,
-               fetch = FetchType.LAZY)
+
+    // 다대다 관계: Wallet ↔ Transaction
+    @ManyToMany(cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "wallet_transaction",
+        joinColumns = @JoinColumn(name = "wallet_address"),
+        inverseJoinColumns = @JoinColumn(name = "transaction_id")
+    )
     private List<Transaction> transactions = new ArrayList<>();
-    
+
     public void addTransaction(Transaction tx) {
-        transactions.add(tx);
-        tx.setWallet(this);
+        if (!transactions.contains(tx)) {
+            transactions.add(tx);
+            tx.getWallets().add(this);
+        }
     }
-    
-    // 생성자
+
+    public void removeTransaction(Transaction tx) {
+        if (transactions.remove(tx)) {
+            tx.getWallets().remove(this);
+        }
+    }
+
     public Wallet() {}
-    
+
     public Wallet(String address, int type, long balance) {
         this.address = address;
-        this.type    = type;
+        this.type = type;
         this.balance = balance;
     }
 
@@ -72,7 +82,8 @@ public class Wallet {
                   Boolean multiIOPattern,
                   Boolean loopingPattern,
                   Boolean relayerPattern,
-                  Boolean peelChainPattern, int patternCnt) {
+                  Boolean peelChainPattern,
+                  int patternCnt) {
         this.address = address;
         this.type = type;
         this.balance = balance;
@@ -84,9 +95,7 @@ public class Wallet {
         this.patternCnt = patternCnt;
     }
 
-    
-
-	// Getter / Setter
+    // Getter / Setter
     public String getAddress() { return address; }
     public void setAddress(String address) { this.address = address; }
 
@@ -120,20 +129,22 @@ public class Wallet {
     public void setPeelChainPattern(Boolean peelChainPattern) {
         this.peelChainPattern = peelChainPattern;
     }
-    
-    public int getPatternCnt() {
-		return patternCnt;
-	}
 
-	public void setPatternCnt(int patternCnt) {
-		this.patternCnt = patternCnt;
-	}
-	
-	public List<Transaction> getTransactions() { return transactions; }
+    public int getPatternCnt() {
+        return patternCnt;
+    }
+
+    public void setPatternCnt(int patternCnt) {
+        this.patternCnt = patternCnt;
+    }
+
+    public List<Transaction> getTransactions() { return transactions; }
     public void setTransactions(List<Transaction> transactions) {
         this.transactions = transactions;
         for (Transaction tx : transactions) {
-            tx.setWallet(this);
+            if (!tx.getWallets().contains(this)) {
+                tx.getWallets().add(this);
+            }
         }
     }
 }
