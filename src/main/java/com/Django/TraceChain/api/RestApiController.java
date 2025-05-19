@@ -1,10 +1,3 @@
-// JSON 기반 API 컨트롤러: RestApiController.java
-// JSON 반환을 위한 /api/search, /api/search-limited, /api/trace, /api/trace-detailed,
-// api/graph /api/detect
-/*
- * New RESTful JSON API: /api/search
- */
-
 package com.Django.TraceChain.api;
 
 import com.Django.TraceChain.dto.*;
@@ -34,6 +27,14 @@ public class RestApiController {
     @GetMapping("/search")
     public ResponseEntity<WalletDto> search(@RequestParam String address,
                                             @RequestParam(defaultValue = "bitcoin") String chain) {
+        if (chain.equals("ethereum")) {
+            Set<String> visited = new HashSet<>();
+            Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
+            ChainClient client = walletService.resolveClient("ethereum");
+            if (client instanceof EthereumClient ethClient) {
+                ethClient.traceRecursiveDetailed(address, 0, 0, depthMap, visited);
+            }
+        }
         Wallet wallet = walletService.findAddress(chain, address);
         wallet.setTransactions(walletService.getTransactions(chain, address));
         return ResponseEntity.ok(DtoMapper.mapWallet(wallet));
@@ -43,6 +44,14 @@ public class RestApiController {
     public ResponseEntity<WalletDto> searchLimited(@RequestParam String address,
                                                    @RequestParam(defaultValue = "bitcoin") String chain,
                                                    @RequestParam(defaultValue = "10") int limit) {
+        if (chain.equals("ethereum")) {
+            Set<String> visited = new HashSet<>();
+            Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
+            ChainClient client = walletService.resolveClient("ethereum");
+            if (client instanceof EthereumClient ethClient) {
+                ethClient.traceRecursiveDetailed(address, 0, 0, depthMap, visited);
+            }
+        }
         Wallet wallet = walletService.findAddress(chain, address);
         wallet.setTransactions(walletService.getTransactions(chain, address, limit));
         return ResponseEntity.ok(DtoMapper.mapWallet(wallet));
@@ -54,13 +63,20 @@ public class RestApiController {
                                              @RequestParam(defaultValue = "0") int depth,
                                              @RequestParam(defaultValue = "2") int maxDepth) {
         Set<String> visited = new HashSet<>();
-        walletService.traceTransactionsRecursive(chain, address, depth, maxDepth, visited);
+        if (chain.equals("ethereum")) {
+            ChainClient client = walletService.resolveClient("ethereum");
+            if (client instanceof EthereumClient ethClient) {
+                ethClient.traceRecursiveDetailed(address, depth, maxDepth, new TreeMap<>(), visited);
+            }
+        } else {
+            walletService.traceTransactionsRecursive(chain, address, depth, maxDepth, visited);
+        }
         return ResponseEntity.ok(visited);
     }
 
     @GetMapping("/trace-detailed")
     public ResponseEntity<Map<Integer, List<WalletDto>>> traceDetailed(@RequestParam String address,
-                                                                       @RequestParam String chain,
+                                                                       @RequestParam(defaultValue = "bitcoin") String chain,
                                                                        @RequestParam(defaultValue = "0") int depth,
                                                                        @RequestParam(defaultValue = "2") int maxDepth) {
         Set<String> visited = new HashSet<>();
@@ -96,75 +112,65 @@ public class RestApiController {
         List<Wallet> wallets;
 
         if (address == null || address.isEmpty()) {
-            // 전체 DB에 있는 지갑 대상으로 패턴 감지 실행
             wallets = walletService.getAllWallets();
             detectService.runAllDetectors(wallets);
         } else {
-            // 입력된 주소에 대해 감지 실행
+            if (chain.equals("ethereum")) {
+                Set<String> visited = new HashSet<>();
+                Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
+                ChainClient client = walletService.resolveClient("ethereum");
+                if (client instanceof EthereumClient ethClient) {
+                    ethClient.traceRecursiveDetailed(address, 0, 0, depthMap, visited);
+                }
+            }
+
             Wallet wallet = walletService.findAddress(chain, address);
+            wallet.setTransactions(walletService.getTransactions(chain, address, 10));
+
             if (wallet == null) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(List.of());
             }
 
-            wallet.setTransactions(walletService.getTransactions(chain, address, 10));
-
-            // 이미 모든 패턴이 감지된 지갑인지 확인
-            boolean alreadyDetected =
-                    wallet.getFixedAmountPattern() != null &&
-                            wallet.getMultiIOPattern() != null &&
-                            wallet.getLoopingPattern() != null &&
-                            wallet.getRelayerPattern() != null &&
-                            wallet.getPeelChainPattern() != null;
+            boolean alreadyDetected = wallet.getFixedAmountPattern() != null && wallet.getMultiIOPattern() != null &&
+                    wallet.getLoopingPattern() != null && wallet.getRelayerPattern() != null && wallet.getPeelChainPattern() != null;
 
             List<Wallet> targetWallets = new ArrayList<>();
             targetWallets.add(wallet);
 
             if (!alreadyDetected) {
-                // 연결된 주소들 재귀적으로 확장 (depth 2)
                 Set<String> visited = new HashSet<>();
                 walletService.traceTransactionsRecursive(chain, address, 0, 2, visited);
 
                 for (String addr : visited) {
                     if (!addr.equals(address)) {
                         Wallet w = walletService.findAddress(chain, addr);
-                        if (w == null) {
-                            System.out.println("⚠️ 지갑 조회 실패: " + addr);
-                            continue; // null 방어
-                        }
+                        if (w == null) continue;
                         w.setTransactions(walletService.getTransactions(chain, addr, 10));
                         targetWallets.add(w);
                     }
                 }
-
-                // 하나라도 패턴이 null인 지갑이 있다면 전체 탐지기 실행
-                boolean shouldDetect = targetWallets.stream().anyMatch(w ->
-                        w.getFixedAmountPattern() == null ||
-                                w.getMultiIOPattern() == null ||
-                                w.getLoopingPattern() == null ||
-                                w.getRelayerPattern() == null ||
-                                w.getPeelChainPattern() == null
-                );
-
-                if (shouldDetect) {
-                    detectService.runAllDetectors(targetWallets);
-                }
+                detectService.runAllDetectors(targetWallets);
             }
 
             wallets = targetWallets;
         }
 
-        // 결과를 DTO로 반환
-        List<WalletDto> results = wallets.stream()
-                .map(DtoMapper::mapWallet)
-                .collect(Collectors.toList());
-
+        List<WalletDto> results = wallets.stream().map(DtoMapper::mapWallet).collect(Collectors.toList());
         return ResponseEntity.ok(results);
     }
-
 
     @GetMapping("/detect-looping")
     public ResponseEntity<List<WalletDto>> detectLoopingOnly(@RequestParam String address,
                                                              @RequestParam(defaultValue = "bitcoin") String chain) {
+        if (chain.equals("ethereum")) {
+            Set<String> visited = new HashSet<>();
+            Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
+            ChainClient client = walletService.resolveClient("ethereum");
+            if (client instanceof EthereumClient ethClient) {
+                ethClient.traceRecursiveDetailed(address, 0, 0, depthMap, visited);
+            }
+        }
+
         Wallet wallet = walletService.findAddress(chain, address);
         wallet.setTransactions(walletService.getTransactions(chain, address, 10));
 
@@ -185,12 +191,8 @@ public class RestApiController {
         }
 
         detectService.runLoopingOnly(wallets);
-
         List<WalletDto> result = wallets.stream().map(DtoMapper::mapWallet).collect(Collectors.toList());
         return ResponseEntity.ok(result);
     }
-
-
-
 
 }
