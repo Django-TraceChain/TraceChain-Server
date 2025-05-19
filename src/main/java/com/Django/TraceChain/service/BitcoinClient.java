@@ -144,6 +144,7 @@ public class BitcoinClient implements ChainClient {
 	@Override
 	public List<Transaction> getTransactions(String address) {
 		return getTransactions(address, Integer.MAX_VALUE);
+		//return getTransactions(address, 5);
 	}
 
 	@Override

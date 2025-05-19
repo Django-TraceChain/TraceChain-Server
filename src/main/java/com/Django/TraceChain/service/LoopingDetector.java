@@ -3,17 +3,22 @@ package com.Django.TraceChain.service;
 import com.Django.TraceChain.model.Transaction;
 import com.Django.TraceChain.model.Transfer;
 import com.Django.TraceChain.model.Wallet;
+import com.Django.TraceChain.repository.TransactionRepository;
 import com.Django.TraceChain.repository.WalletRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class LoopingDetector implements MixingDetector {
 
 	@Autowired
 	private WalletRepository walletRepository;
+
+	@Autowired
+	private TransactionRepository transactionRepository;
 
 	private static final int MAX_DEPTH = 5;
 
@@ -39,6 +44,18 @@ public class LoopingDetector implements MixingDetector {
 						System.out.println("▶ Loop path: " + String.join(" → ", lp))
 				);
 
+				List<Transaction> originalTransactions = wallet.getTransactions();
+				if (originalTransactions == null || originalTransactions.isEmpty()) continue;
+
+				List<Transaction> limited = originalTransactions.stream()
+						.sorted(Comparator.comparing(Transaction::getTimestamp).reversed())
+						.limit(10)
+						.map(tx -> transactionRepository.findById(tx.getTxID()).orElse(null))
+						.filter(Objects::nonNull)
+						.collect(Collectors.toMap(Transaction::getTxID, t -> t, (t1, t2) -> t1))
+						.values().stream().toList();
+
+				wallet.setTransactions(limited);
 				walletRepository.saveAndFlush(wallet);
 			}
 		}
@@ -49,6 +66,7 @@ public class LoopingDetector implements MixingDetector {
 
 		for (Wallet wallet : wallets) {
 			List<Transaction> transactions = wallet.getTransactions();
+			if (transactions == null) continue;
 			transactions.sort(Comparator.comparing(Transaction::getTimestamp));
 
 			for (Transaction tx : transactions) {
