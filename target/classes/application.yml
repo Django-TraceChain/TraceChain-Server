@@ -1,6 +1,6 @@
 blockstream:
-  client-id: eeb1a2e3-5a75-4f13-81db-0af024067f5a
-  client-secret: FOkd1yYZYLoQ8ayLJNEqiHjmZUvYodqe
+  client-id: 2cc2811d-74a5-4970-918a-b8852a59b851
+  client-secret: vDDt3DrCBCazPQ5lcVYAGBMnufa9QBa0
   token-url: https://login.blockstream.com/realms/blockstream-public/protocol/openid-connect/token
   api-url: https://enterprise.blockstream.info/api
 

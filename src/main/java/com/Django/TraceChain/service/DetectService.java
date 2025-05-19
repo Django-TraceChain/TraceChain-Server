@@ -22,4 +22,13 @@ public class DetectService {
             detector.analyze(wallets);
         }
     }
+    //임시코드
+    public void runLoopingOnly(List<Wallet> wallets) {
+        for (MixingDetector detector : detectors) {
+            if (detector instanceof LoopingDetector) {
+                detector.analyze(wallets);
+            }
+        }
+    }
+
 }
