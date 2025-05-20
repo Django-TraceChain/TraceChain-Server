@@ -17,11 +17,22 @@ public class DetectService {
         this.detectors = detectors;
     }
 
-    public void runAllDetectors(List<Wallet> wallets) {
-        for (MixingDetector detector : detectors) {
-            detector.analyze(wallets);
-        }
-    }
+	public void runAllDetectors(List<Wallet> wallets) {
+	    if (wallets.isEmpty()) return;
+
+	    int type = wallets.get(0).getType();
+
+	    for (MixingDetector detector : detectors) {
+	        if (type == 0 && detector instanceof PeelChainDetector) {
+	            continue;  // type 0이면 PeelChainDetector 제외
+	        }
+	        if (type == 1 && detector instanceof RelayerDetector) {
+	            continue;  // type 1이면 RelayerDetector 제외
+	        }
+	        detector.analyze(wallets);
+	    }
+	}
+
     //임시코드
     public void runLoopingOnly(List<Wallet> wallets) {
         for (MixingDetector detector : detectors) {

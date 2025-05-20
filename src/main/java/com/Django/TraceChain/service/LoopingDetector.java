@@ -24,6 +24,7 @@ public class LoopingDetector implements MixingDetector {
 
 	@Override
 	public void analyze(List<Wallet> wallets) {
+		/*
 		Map<String, Set<String>> graph = buildGraph(wallets);
 
 		for (Wallet wallet : wallets) {
@@ -59,6 +60,7 @@ public class LoopingDetector implements MixingDetector {
 				walletRepository.saveAndFlush(wallet);
 			}
 		}
+		*/
 	}
 
 	private Map<String, Set<String>> buildGraph(List<Wallet> wallets) {

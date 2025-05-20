@@ -8,6 +8,7 @@ import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.Django.TraceChain.model.Transaction;
 import com.Django.TraceChain.model.Transfer;
@@ -20,36 +21,37 @@ public class FixedAmountDetector implements MixingDetector {
     @Autowired
     private WalletRepository walletRepository;
 
+    @Transactional
     @Override
     public void analyze(List<Wallet> wallets) {
         for (Wallet wallet : wallets) {
-            List<Transaction> transactions = wallet.getTransactions();
             String walletAddress = wallet.getAddress();
+            System.out.println("[FixedAmount] 분석 시작: " + walletAddress);
 
-            // timestamp 기준 정렬
+            List<Transaction> transactions = wallet.getTransactions();
+
             transactions.sort((a, b) -> a.getTimestamp().compareTo(b.getTimestamp()));
 
             boolean detected = false;
 
             for (int i = 0; i < transactions.size(); i++) {
-                Map<Double, Integer> amountCountMap = new HashMap<>(); // 금액별 출현 횟수 저장
+                Map<Double, Integer> amountCountMap = new HashMap<>();
                 LocalDateTime startTime = transactions.get(i).getTimestamp();
 
                 for (int j = i; j < transactions.size(); j++) {
                     Transaction currentTx = transactions.get(j);
                     LocalDateTime currentTime = currentTx.getTimestamp();
 
-                    if (Duration.between(startTime, currentTime).getSeconds() > 300) break; // 5분 초과
+                    if (Duration.between(startTime, currentTime).getSeconds() > 300) break;
 
                     for (Transfer transfer : currentTx.getTransfers()) {
                         if (walletAddress.equals(transfer.getSender()) || walletAddress.equals(transfer.getReceiver())) {
-                            double amount = transfer.getAmount(); // 금액 가져오기
+                            double amount = transfer.getAmount();
                             amountCountMap.put(amount, amountCountMap.getOrDefault(amount, 0) + 1);
                         }
                     }
                 }
 
-                // 고정된 금액으로 최소 3회 이상 입출력 반복 시 탐지
                 for (int count : amountCountMap.values()) {
                     if (count >= 3) {
                         detected = true;
@@ -63,7 +65,11 @@ public class FixedAmountDetector implements MixingDetector {
             wallet.setFixedAmountPattern(detected);
             if (detected) {
                 wallet.setPatternCnt(wallet.getPatternCnt() + 1);
+                System.out.println("[FixedAmount] 패턴 감지됨: " + walletAddress);
+            } else {
+                System.out.println("[FixedAmount] 패턴 없음: " + walletAddress);
             }
+
             walletRepository.save(wallet);
         }
     }

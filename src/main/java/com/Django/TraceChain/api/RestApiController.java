@@ -107,57 +107,22 @@ public class RestApiController {
     }
 
     @GetMapping("/detect")
-    public ResponseEntity<List<WalletDto>> detectPatterns(@RequestParam(required = false) String address,
-                                                          @RequestParam(defaultValue = "bitcoin") String chain) {
-        List<Wallet> wallets;
+    public ResponseEntity<List<WalletDto>> detectAllPatterns() {
+        // 1. 모든 지갑을 가져옴
+        List<Wallet> wallets = walletService.getAllWallets();
 
-        if (address == null || address.isEmpty()) {
-            wallets = walletService.getAllWallets();
-            detectService.runAllDetectors(wallets);
-        } else {
-            if (chain.equals("ethereum")) {
-                Set<String> visited = new HashSet<>();
-                Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
-                ChainClient client = walletService.resolveClient("ethereum");
-                if (client instanceof EthereumClient ethClient) {
-                    ethClient.traceRecursiveDetailed(address, 0, 0, depthMap, visited);
-                }
-            }
 
-            Wallet wallet = walletService.findAddress(chain, address);
-            wallet.setTransactions(walletService.getTransactions(chain, address, 10));
+        // 2. 모든 탐지기 실행
+        detectService.runAllDetectors(wallets);
 
-            if (wallet == null) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(List.of());
-            }
+        // 3. 결과 매핑 및 반환
+        List<WalletDto> results = wallets.stream()
+                                         .map(DtoMapper::mapWallet)
+                                         .collect(Collectors.toList());
 
-            boolean alreadyDetected = wallet.getFixedAmountPattern() != null && wallet.getMultiIOPattern() != null &&
-                    wallet.getLoopingPattern() != null && wallet.getRelayerPattern() != null && wallet.getPeelChainPattern() != null;
-
-            List<Wallet> targetWallets = new ArrayList<>();
-            targetWallets.add(wallet);
-
-            if (!alreadyDetected) {
-                Set<String> visited = new HashSet<>();
-                walletService.traceTransactionsRecursive(chain, address, 0, 2, visited);
-
-                for (String addr : visited) {
-                    if (!addr.equals(address)) {
-                        Wallet w = walletService.findAddress(chain, addr);
-                        if (w == null) continue;
-                        w.setTransactions(walletService.getTransactions(chain, addr, 10));
-                        targetWallets.add(w);
-                    }
-                }
-                detectService.runAllDetectors(targetWallets);
-            }
-
-            wallets = targetWallets;
-        }
-
-        List<WalletDto> results = wallets.stream().map(DtoMapper::mapWallet).collect(Collectors.toList());
         return ResponseEntity.ok(results);
     }
+
 
     @GetMapping("/detect-looping")
     public ResponseEntity<List<WalletDto>> detectLoopingOnly(@RequestParam String address,
