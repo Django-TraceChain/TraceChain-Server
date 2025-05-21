@@ -153,66 +153,81 @@ public class BitcoinClient implements ChainClient {
 		return new ArrayList<>(transactionMap.values());
 	}
 
+	@Override
 	@Transactional
-	public void traceTransactionsRecursive(String address, int depth, int maxDepth, Set<String> visited) {
-		if (depth > maxDepth || visited.contains(address)) return;
-		visited.add(address);
+	public void traceAllTransactionsRecursive(String address, int depth, int maxDepth, Set<String> visited) {
+	    if (depth > maxDepth || visited.contains(address)) return;
+	    visited.add(address);
 
-		Wallet wallet = walletRepository.findById(address).orElseGet(() -> findAddress(address));
-		if (wallet == null) return;
-		List<Transaction> transactions = getTransactions(address);
-		if (transactions == null || transactions.isEmpty()) return;
+	    Wallet wallet = walletRepository.findById(address)
+	            .orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
+	    if (wallet == null) return;
 
-		Map<String, Transaction> txMap = new LinkedHashMap<>();
-		for (Transaction tx : transactions) txMap.put(tx.getTxID(), tx);
-		transactionRepository.saveAll(new ArrayList<>(txMap.values()));
-		walletRepository.save(wallet);
+	    List<Transaction> transactions = getTransactions(address);
+	    if (transactions == null || transactions.isEmpty()) return;
 
-		Set<String> nextAddresses = new HashSet<>();
-		for (Transaction tx : txMap.values()) {
-			if (tx.getTransfers() == null) continue;
-			tx.getTransfers().forEach(t -> {
-				if (t.getSender() != null && !visited.contains(t.getSender())) nextAddresses.add(t.getSender());
-				if (t.getReceiver() != null && !visited.contains(t.getReceiver())) nextAddresses.add(t.getReceiver());
-			});
-		}
+	    Map<String, Transaction> txMap = new LinkedHashMap<>();
+	    for (Transaction tx : transactions) {
+	        txMap.put(tx.getTxID(), tx);
+	    }
 
-		for (String next : nextAddresses) {
-			traceTransactionsRecursive(next, depth + 1, maxDepth, visited);
-		}
+	    transactionRepository.saveAll(txMap.values());
+	    walletRepository.save(wallet); // optional if cascade exists
+
+	    Set<String> nextAddresses = new HashSet<>();
+	    for (Transaction tx : txMap.values()) {
+	        if (tx.getTransfers() == null) continue;
+	        for (Transfer transfer : tx.getTransfers()) {
+	            String from = transfer.getSender();
+	            String to = transfer.getReceiver();
+	            if (from != null && !visited.contains(from)) nextAddresses.add(from);
+	            if (to != null && !visited.contains(to)) nextAddresses.add(to);
+	        }
+	    }
+
+	    for (String next : nextAddresses) {
+	        traceAllTransactionsRecursive(next, depth + 1, maxDepth, visited);
+	    }
 	}
 
 	@Transactional
-	public void traceRecursiveDetailed(String address, int depth, int maxDepth,
-									   Map<Integer, List<Wallet>> depthMap, Set<String> visited) {
-		if (depth > maxDepth || visited.contains(address)) return;
-		visited.add(address);
+	public void traceLimitedTransactionsRecursive(String address, int depth, int maxDepth,
+	                                              Map<Integer, List<Wallet>> depthMap, Set<String> visited) {
+	    if (depth > maxDepth || visited.contains(address)) return;
+	    visited.add(address);
 
-		Wallet wallet = walletRepository.findById(address)
-				.orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
-		if (wallet == null) return;
+	    Wallet wallet = walletRepository.findById(address)
+	            .orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
+	    if (wallet == null) return;
 
-		List<Transaction> transactions = getTransactions(address, 10);
-		if (transactions == null || transactions.isEmpty()) return;
+	    List<Transaction> transactions = getTransactions(address, 10);
+	    if (transactions == null || transactions.isEmpty()) return;
 
-		Map<String, Transaction> txMap = new LinkedHashMap<>();
-		for (Transaction tx : transactions) txMap.put(tx.getTxID(), tx);
-		transactionRepository.saveAll(new ArrayList<>(txMap.values()));
-		walletRepository.save(wallet);
+	    Map<String, Transaction> txMap = new LinkedHashMap<>();
+	    for (Transaction tx : transactions) {
+	        txMap.put(tx.getTxID(), tx);
+	    }
 
-		depthMap.computeIfAbsent(depth, d -> new ArrayList<>()).add(wallet);
+	    transactionRepository.saveAll(txMap.values());
+	    walletRepository.save(wallet); // optional
 
-		Set<String> nextAddresses = new HashSet<>();
-		for (Transaction tx : txMap.values()) {
-			if (tx.getTransfers() == null) continue;
-			tx.getTransfers().forEach(t -> {
-				if (t.getSender() != null && !visited.contains(t.getSender())) nextAddresses.add(t.getSender());
-				if (t.getReceiver() != null && !visited.contains(t.getReceiver())) nextAddresses.add(t.getReceiver());
-			});
-		}
+	    // 깊이별 지갑 정보 저장
+	    depthMap.computeIfAbsent(depth, d -> new ArrayList<>()).add(wallet);
 
-		for (String next : nextAddresses) {
-			traceRecursiveDetailed(next, depth + 1, maxDepth, depthMap, visited);
-		}
+	    Set<String> nextAddresses = new HashSet<>();
+	    for (Transaction tx : txMap.values()) {
+	        if (tx.getTransfers() == null) continue;
+	        for (Transfer transfer : tx.getTransfers()) {
+	            String from = transfer.getSender();
+	            String to = transfer.getReceiver();
+	            if (from != null && !visited.contains(from)) nextAddresses.add(from);
+	            if (to != null && !visited.contains(to)) nextAddresses.add(to);
+	        }
+	    }
+
+	    for (String next : nextAddresses) {
+	        traceLimitedTransactionsRecursive(next, depth + 1, maxDepth, depthMap, visited);
+	    }
 	}
+
 }

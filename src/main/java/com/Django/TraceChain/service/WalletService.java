@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
  * 사용자가 주소를 검색하면 Controller로부터 전닯받은 뒤, BitcoinClient 또는 EthereumClient로 전달
  */
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
@@ -47,8 +48,13 @@ public class WalletService {
     } // 몇개를 가져올지 한계를 정해서 트랜잭션 가져오면 단계로 재귀를 돌려도 할만하지 않을까?
 
     
-    public void traceTransactionsRecursive(String chainType, String address, int depth, int maxDepth, Set<String> visited) {
-    	getClient(chainType).traceTransactionsRecursive(address, depth, maxDepth, visited);
+    public void traceAllTransactionsRecursive(String chainType, String address, int depth, int maxDepth, Set<String> visited) {
+    	getClient(chainType).traceAllTransactionsRecursive(address, depth, maxDepth, visited);
+    }
+    
+    public void traceLimitedTransactionsRecursive(String chainType, String address, int depth, int maxDepth,
+            Map<Integer, List<Wallet>> depthMap, Set<String> visited) {
+    	getClient(chainType).traceLimitedTransactionsRecursive(address, depth, maxDepth, depthMap, visited);
     }
     
     public List<Wallet> getAllWallets() {

@@ -42,7 +42,7 @@ public class Controller {
         Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
         ChainClient client = walletService.resolveClient("ethereum");
         if (client instanceof EthereumClient ethClient) {
-            ethClient.traceRecursiveDetailed(address, depth, maxDepth, depthMap, visited);
+            ethClient.traceLimitedTransactionsRecursive(address, depth, maxDepth, depthMap, visited);
         }
         return walletRepository.findById(address).orElse(null);
     }
@@ -162,15 +162,7 @@ public class Controller {
 
         Set<String> visited = new HashSet<>();
 
-        if (chain.equals("ethereum")) {
-            Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
-            ChainClient client = walletService.resolveClient("ethereum");
-            if (client instanceof EthereumClient ethClient) {
-                ethClient.traceRecursiveDetailed(address, depth, maxDepth, depthMap, visited);
-            }
-        } else {
-            walletService.traceTransactionsRecursive(chain, address, depth, maxDepth, visited);
-        }
+        walletService.traceAllTransactionsRecursive(chain, address, depth, maxDepth, visited);
 
         StringBuilder html = new StringBuilder();
         html.append("<html><body>");
@@ -194,17 +186,7 @@ public class Controller {
         Set<String> visited = new HashSet<>();
         Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
 
-        if (chain.equals("ethereum")) {
-            ChainClient client = walletService.resolveClient("ethereum");
-            if (client instanceof EthereumClient ethClient) {
-                ethClient.traceRecursiveDetailed(address, depth, maxDepth, depthMap, visited);
-            }
-        } else {
-            ChainClient client = walletService.resolveClient(chain);
-            if (client instanceof BitcoinClient btcClient) {
-                btcClient.traceRecursiveDetailed(address, depth, maxDepth, depthMap, visited);
-            }
-        }
+        walletService.traceLimitedTransactionsRecursive(chain, address, depth, maxDepth, depthMap, visited);
 
         StringBuilder html = new StringBuilder();
         html.append("<html><head><style>");

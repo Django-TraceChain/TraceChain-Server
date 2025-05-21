@@ -27,14 +27,7 @@ public class RestApiController {
     @GetMapping("/search")
     public ResponseEntity<WalletDto> search(@RequestParam String address,
                                             @RequestParam(defaultValue = "bitcoin") String chain) {
-        if (chain.equals("ethereum")) {
-            Set<String> visited = new HashSet<>();
-            Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
-            ChainClient client = walletService.resolveClient("ethereum");
-            if (client instanceof EthereumClient ethClient) {
-                ethClient.traceRecursiveDetailed(address, 0, 0, depthMap, visited);
-            }
-        }
+        
         Wallet wallet = walletService.findAddress(chain, address);
         wallet.setTransactions(walletService.getTransactions(chain, address));
         return ResponseEntity.ok(DtoMapper.mapWallet(wallet));
@@ -44,14 +37,7 @@ public class RestApiController {
     public ResponseEntity<WalletDto> searchLimited(@RequestParam String address,
                                                    @RequestParam(defaultValue = "bitcoin") String chain,
                                                    @RequestParam(defaultValue = "10") int limit) {
-        if (chain.equals("ethereum")) {
-            Set<String> visited = new HashSet<>();
-            Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
-            ChainClient client = walletService.resolveClient("ethereum");
-            if (client instanceof EthereumClient ethClient) {
-                ethClient.traceRecursiveDetailed(address, 0, 0, depthMap, visited);
-            }
-        }
+        
         Wallet wallet = walletService.findAddress(chain, address);
         wallet.setTransactions(walletService.getTransactions(chain, address, limit));
         return ResponseEntity.ok(DtoMapper.mapWallet(wallet));
@@ -63,18 +49,11 @@ public class RestApiController {
                                              @RequestParam(defaultValue = "0") int depth,
                                              @RequestParam(defaultValue = "2") int maxDepth) {
         Set<String> visited = new HashSet<>();
-        if (chain.equals("ethereum")) {
-            ChainClient client = walletService.resolveClient("ethereum");
-            if (client instanceof EthereumClient ethClient) {
-                ethClient.traceRecursiveDetailed(address, depth, maxDepth, new TreeMap<>(), visited);
-            }
-        } else {
-            walletService.traceTransactionsRecursive(chain, address, depth, maxDepth, visited);
-        }
+        walletService.traceAllTransactionsRecursive(chain, address, depth, maxDepth, visited);
         return ResponseEntity.ok(visited);
     }
 
-    @GetMapping("/trace-detailed")
+    @GetMapping("/trace-limited")
     public ResponseEntity<Map<Integer, List<WalletDto>>> traceDetailed(@RequestParam String address,
                                                                        @RequestParam(defaultValue = "bitcoin") String chain,
                                                                        @RequestParam(defaultValue = "0") int depth,
@@ -82,14 +61,7 @@ public class RestApiController {
         Set<String> visited = new HashSet<>();
         Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
 
-        ChainClient client = walletService.resolveClient(chain);
-        if (client instanceof EthereumClient ethClient) {
-            ethClient.traceRecursiveDetailed(address, depth, maxDepth, depthMap, visited);
-        } else if (client instanceof BitcoinClient btcClient) {
-            btcClient.traceRecursiveDetailed(address, depth, maxDepth, depthMap, visited);
-        } else {
-            return ResponseEntity.badRequest().build();
-        }
+        walletService.traceLimitedTransactionsRecursive(chain, address, depth, maxDepth, depthMap, visited);
 
         Map<Integer, List<WalletDto>> dtoMap = depthMap.entrySet().stream()
                 .collect(Collectors.toMap(
@@ -124,6 +96,7 @@ public class RestApiController {
     }
 
 
+    
     @GetMapping("/detect-looping")
     public ResponseEntity<List<WalletDto>> detectLoopingOnly(@RequestParam String address,
                                                              @RequestParam(defaultValue = "bitcoin") String chain) {
@@ -132,7 +105,7 @@ public class RestApiController {
             Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
             ChainClient client = walletService.resolveClient("ethereum");
             if (client instanceof EthereumClient ethClient) {
-                ethClient.traceRecursiveDetailed(address, 0, 0, depthMap, visited);
+                ethClient.traceLimitedTransactionsRecursive(address, 0, 0, depthMap, visited);
             }
         }
 
@@ -140,7 +113,7 @@ public class RestApiController {
         wallet.setTransactions(walletService.getTransactions(chain, address, 10));
 
         Set<String> visited = new HashSet<>();
-        walletService.traceTransactionsRecursive(chain, address, 0, 2, visited);
+        walletService.traceAllTransactionsRecursive(chain, address, 0, 2, visited);
 
         List<Wallet> wallets = new ArrayList<>();
         wallets.add(wallet);
