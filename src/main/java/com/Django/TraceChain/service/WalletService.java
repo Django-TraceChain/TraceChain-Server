@@ -61,7 +61,7 @@ public class WalletService {
         return walletRepository.findAll();
     }
 
-    //재귀 탐색을 테스트하기 위함 =>/trac-detailed를 별도 추가하였음
+
     public ChainClient resolveClient(String chainType) {
         return getClient(chainType);
     }

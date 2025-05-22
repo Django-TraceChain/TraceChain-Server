@@ -172,6 +172,19 @@ public class EthereumClient implements ChainClient {
         return new ArrayList<>(txMap.values());
     }
 
+    private Wallet safeFindOrCreateWallet(String address) {
+        Wallet wallet = walletRepository.findById(address).orElse(null);
+        if (wallet == null) {
+            wallet = new Wallet(address, 2, 0L);
+            try {
+                return walletRepository.save(wallet);
+            } catch (Exception e) {
+                // 다른 트랜잭션이 이미 저장했을 수 있음
+                return walletRepository.findById(address).orElse(wallet);
+            }
+        }
+        return wallet;
+    }
 
     @Transactional
     public void traceAllTransactionsRecursive(String address, int depth, int maxDepth, Set<String> visited) {
@@ -232,22 +245,20 @@ public class EthereumClient implements ChainClient {
     }
 
 
+
     @Transactional
     public void traceLimitedTransactionsRecursive(String address, int depth, int maxDepth,
-                                                 Map<Integer, List<Wallet>> depthMap,
-                                                 Set<String> visited) {
+                                                  Map<Integer, List<Wallet>> depthMap,
+                                                  Set<String> visited) {
         if (depth > maxDepth || visited.contains(address)) return;
         visited.add(address);
 
-        Wallet wallet = walletRepository.findById(address)
-                .orElseGet(() -> walletRepository.save(new Wallet(address, 2, 0L)));
+        Wallet wallet = safeFindOrCreateWallet(address);
         if (wallet == null) return;
 
-        // 최대 10개 트랜잭션 가져오기
         List<Transaction> transactions = getTransactions(address, 10);
         if (transactions == null || transactions.isEmpty()) return;
 
-        // 중복 제거를 위한 Map 사용
         Map<String, Transaction> txMap = new LinkedHashMap<>();
         for (Transaction tx : transactions) {
             txMap.put(tx.getTxID(), tx);
@@ -257,9 +268,12 @@ public class EthereumClient implements ChainClient {
                 .map(Transaction::getTxID)
                 .collect(Collectors.toSet());
 
+        boolean walletModified = false;
+
         for (Transaction tx : txMap.values()) {
             if (!existingTxIDs.contains(tx.getTxID())) {
                 wallet.addTransaction(tx);
+                walletModified = true;
             }
             if (!tx.getWallets().contains(wallet)) {
                 tx.getWallets().add(wallet);
@@ -269,10 +283,14 @@ public class EthereumClient implements ChainClient {
                     t.setTransaction(tx);
                 }
             }
+
+            // 트랜잭션은 개별 저장
+            transactionRepository.save(tx);
         }
 
-        transactionRepository.saveAll(txMap.values());
-        walletRepository.save(wallet);
+        if (walletModified) {
+            walletRepository.save(wallet);
+        }
 
         depthMap.computeIfAbsent(depth, d -> new ArrayList<>()).add(wallet);
 
@@ -291,6 +309,7 @@ public class EthereumClient implements ChainClient {
             traceLimitedTransactionsRecursive(next, depth + 1, maxDepth, depthMap, visited);
         }
     }
+
 
 
 }
