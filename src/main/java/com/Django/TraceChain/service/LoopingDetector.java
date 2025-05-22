@@ -24,7 +24,6 @@ public class LoopingDetector implements MixingDetector {
 
 	@Override
 	public void analyze(List<Wallet> wallets) {
-		/*
 		Map<String, Set<String>> graph = buildGraph(wallets);
 
 		for (Wallet wallet : wallets) {
@@ -53,14 +52,12 @@ public class LoopingDetector implements MixingDetector {
 						.limit(10)
 						.map(tx -> transactionRepository.findById(tx.getTxID()).orElse(null))
 						.filter(Objects::nonNull)
-						.collect(Collectors.toMap(Transaction::getTxID, t -> t, (t1, t2) -> t1))
-						.values().stream().toList();
+						.collect(Collectors.collectingAndThen(Collectors.toList(), ArrayList::new)); // ✅ 변경된 부분
 
 				wallet.setTransactions(limited);
 				walletRepository.saveAndFlush(wallet);
 			}
 		}
-		*/
 	}
 
 	private Map<String, Set<String>> buildGraph(List<Wallet> wallets) {
