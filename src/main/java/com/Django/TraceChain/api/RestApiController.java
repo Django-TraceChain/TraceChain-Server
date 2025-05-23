@@ -96,41 +96,5 @@ public class RestApiController {
     }
 
 
-    
-    @GetMapping("/detect-looping")
-    public ResponseEntity<List<WalletDto>> detectLoopingOnly(@RequestParam String address,
-                                                             @RequestParam(defaultValue = "bitcoin") String chain) {
-        if (chain.equals("ethereum")) {
-            Set<String> visited = new HashSet<>();
-            Map<Integer, List<Wallet>> depthMap = new TreeMap<>();
-            ChainClient client = walletService.resolveClient("ethereum");
-            if (client instanceof EthereumClient ethClient) {
-                ethClient.traceLimitedTransactionsRecursive(address, 0, 0, depthMap, visited);
-            }
-        }
-
-        Wallet wallet = walletService.findAddress(chain, address);
-        wallet.setTransactions(walletService.getTransactions(chain, address, 10));
-
-        Set<String> visited = new HashSet<>();
-        walletService.traceAllTransactionsRecursive(chain, address, 0, 2, visited);
-
-        List<Wallet> wallets = new ArrayList<>();
-        wallets.add(wallet);
-
-        for (String addr : visited) {
-            if (!addr.equals(address)) {
-                Wallet w = walletService.findAddress(chain, addr);
-                if (w != null) {
-                    w.setTransactions(walletService.getTransactions(chain, addr, 10));
-                    wallets.add(w);
-                }
-            }
-        }
-
-        detectService.runLoopingOnly(wallets);
-        List<WalletDto> result = wallets.stream().map(DtoMapper::mapWallet).collect(Collectors.toList());
-        return ResponseEntity.ok(result);
-    }
 
 }
