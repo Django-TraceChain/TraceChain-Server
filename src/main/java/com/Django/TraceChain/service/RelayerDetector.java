@@ -76,6 +76,11 @@ public class RelayerDetector implements MixingDetector {
         }
 
         System.out.println("[Relayer] 후보 relayer 수: " + senderToTransfers.size());
+        
+        // 모든 지갑에 탐지 초기값 false 설정
+        for (Wallet w : wallets) {
+            w.setRelayerPattern(false);
+        }
 
         // 2. 후보 Relayer를 검토
         for (Map.Entry<String, List<Transfer>> entry : senderToTransfers.entrySet()) {
