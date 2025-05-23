@@ -30,7 +30,9 @@ public class BitcoinClient implements ChainClient {
     private String apiUrl;
 
     @Autowired
-    public BitcoinClient(AccessToken accessToken, WalletRepository walletRepository, TransactionRepository transactionRepository) {
+    public BitcoinClient(AccessToken accessToken,
+                         WalletRepository walletRepository,
+                         TransactionRepository transactionRepository) {
         this.accessToken = accessToken;
         this.walletRepository = walletRepository;
         this.transactionRepository = transactionRepository;
@@ -79,18 +81,20 @@ public class BitcoinClient implements ChainClient {
             return existingOpt.get();
         }
 
-        // 2. 없으면 새 객체 생성
+        // 2. 트랜잭션 총 금액 계산 (vout의 합)
         long amount = 0;
         for (JsonNode vout : txNode.path("vout")) {
             amount += (long) (vout.path("value").asDouble() * 1e8);
         }
 
+        // 3. 트랜잭션 시간 정보 파싱
         LocalDateTime txTime = LocalDateTime.ofInstant(
                 Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong()), ZoneOffset.UTC);
 
         Transaction tx = new Transaction(txid, amount, txTime);
 
-        // 3. Transfer 추가 (입출금 관계)
+        // 4. Transfer 객체 생성 및 트랜잭션에 추가
+        // 입력부 (vin)
         for (JsonNode vin : txNode.path("vin")) {
             String sender = vin.path("prevout").path("scriptpubkey_address").asText(null);
             long val = vin.path("prevout").path("value").asLong(0);
@@ -100,6 +104,7 @@ public class BitcoinClient implements ChainClient {
             tx.addTransfer(t);
         }
 
+        // 출력부 (vout)
         for (JsonNode vout : txNode.path("vout")) {
             String receiver = vout.path("scriptpubkey_address").asText(null);
             long val = vout.path("value").asLong(0);
@@ -117,6 +122,7 @@ public class BitcoinClient implements ChainClient {
         return getTransactions(address, Integer.MAX_VALUE);
     }
 
+    @Transactional
     @Override
     public List<Transaction> getTransactions(String address, int limit) {
         String token = accessToken.getAccessToken();
@@ -155,7 +161,6 @@ public class BitcoinClient implements ChainClient {
                     if (!e.getMessage().contains("A different object with the same identifier value was already associated with the session")) {
                         throw e;
                     }
-                    // 예외 무시하고 계속 진행
                 }
 
                 tx.getWallets().add(wallet);
@@ -184,6 +189,7 @@ public class BitcoinClient implements ChainClient {
         traceTransactionsRecursiveInternal(address, depth, maxDepth, visited, depthMap, true);
     }
 
+    @Transactional
     private void traceTransactionsRecursiveInternal(String address, int depth, int maxDepth,
                                                     Set<String> visited,
                                                     Map<Integer, List<Wallet>> depthMap,
@@ -196,23 +202,28 @@ public class BitcoinClient implements ChainClient {
             wallet = walletRepository.findById(address)
                     .orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
         } catch (Exception e) {
-            // 로그를 남기고 진행 중단 (트랜잭션 롤백 방지)
             System.err.println("지갑 저장 중 예외 발생: " + e.getMessage());
             return;
         }
 
         if (wallet == null) return;
 
-        // 트랜잭션 조회
         List<Transaction> transactions = useLimit ? getTransactions(address, 10) : getTransactions(address);
         if (transactions == null || transactions.isEmpty()) return;
 
+        // 기존에 txMap.put(tx.getTxID(), tx) 한 다음, 바로 tx.getTransfers() 접근 시 LazyInitializationException 발생 위험 있음
+        // 그래서 아래처럼 DB에서 fetch join으로 transfers 포함된 트랜잭션을 다시 조회함
         Map<String, Transaction> txMap = new LinkedHashMap<>();
+        List<String> txIDs = new ArrayList<>();
         for (Transaction tx : transactions) {
+            txIDs.add(tx.getTxID());
+        }
+
+        List<Transaction> transactionsWithTransfers = transactionRepository.findAllByIdWithTransfers(txIDs);
+        for (Transaction tx : transactionsWithTransfers) {
             txMap.put(tx.getTxID(), tx);
         }
 
-        // 저장 로직 try-catch로 감싸기
         try {
             transactionRepository.saveAll(txMap.values());
             walletRepository.save(wallet);
@@ -221,7 +232,6 @@ public class BitcoinClient implements ChainClient {
             return;
         }
 
-        // 깊이별 저장
         if (useLimit && depthMap != null) {
             depthMap.computeIfAbsent(depth, d -> new ArrayList<>()).add(wallet);
         }
@@ -244,6 +254,5 @@ public class BitcoinClient implements ChainClient {
             traceTransactionsRecursiveInternal(next, depth + 1, maxDepth, visited, depthMap, useLimit);
         }
     }
-
 
 }
