@@ -17,6 +17,13 @@ import java.util.Map;
 @Component
 public class DatabaseInitializer implements CommandLineRunner {
 
+	@Override
+	public void run(String... args) throws Exception {
+		// TODO Auto-generated method stub
+		
+	}
+
+	/*
     private final WalletRepository walletRepository;
 
     public DatabaseInitializer(WalletRepository walletRepository) {
@@ -172,4 +179,5 @@ public class DatabaseInitializer implements CommandLineRunner {
 
         System.out.println("지갑 및 연관 트랜잭션 초기화 완료");
     }
+    */
 }

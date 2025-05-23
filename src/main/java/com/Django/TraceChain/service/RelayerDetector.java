@@ -50,89 +50,103 @@ relayer 추론 및 지갑 연결성 분석 포함
 @Service
 public class RelayerDetector implements MixingDetector {
 
-	@Autowired
-	private WalletRepository walletRepository;
+    @Autowired
+    private WalletRepository walletRepository;
 
-	private static final int TIME_THRESHOLD_SEC = 300; // 5분
-	private static final int MIN_RELAY_COUNT = 3;
+    private static final int TIME_THRESHOLD_SEC = 300; // 5분
+    private static final int MIN_RELAY_COUNT = 3;
 
-	@Transactional
-	@Override
-	public void analyze(List<Wallet> wallets) {
-		Map<String, List<Transfer>> senderToTransfers = new HashMap<>();
+    @Transactional
+    @Override
+    public void analyze(List<Wallet> wallets) {
+        Map<String, List<Transfer>> senderToTransfers = new HashMap<>();
 
-		// 1. 모든 Transfer 수집
-		for (Wallet wallet : wallets) {
-			for (Transaction tx : wallet.getTransactions()) {
-				for (Transfer t : tx.getTransfers()) {
-					String sender = t.getSender();
-					if (sender == null || sender.equals(wallet.getAddress())) continue;
+        System.out.println("[Relayer] 분석 시작");
 
-					senderToTransfers.computeIfAbsent(sender, k -> new ArrayList<>()).add(t);
-				}
-			}
-		}
+        // 1. 모든 Transfer 수집
+        for (Wallet wallet : wallets) {
+            for (Transaction tx : wallet.getTransactions()) {
+                for (Transfer t : tx.getTransfers()) {
+                    String sender = t.getSender();
+                    if (sender == null || sender.equals(wallet.getAddress())) continue;
 
-		// 2. 후보 Relayer를 검토
-		for (Map.Entry<String, List<Transfer>> entry : senderToTransfers.entrySet()) {
-			String potentialRelayer = entry.getKey();
-			List<Transfer> transfers = entry.getValue();
+                    senderToTransfers.computeIfAbsent(sender, k -> new ArrayList<>()).add(t);
+                }
+            }
+        }
 
-			// 수신자별 그룹핑
-			Map<String, List<Transfer>> receiverMap = new HashMap<>();
-			for (Transfer t : transfers) {
-				receiverMap.computeIfAbsent(t.getReceiver(), r -> new ArrayList<>()).add(t);
-			}
+        System.out.println("[Relayer] 후보 relayer 수: " + senderToTransfers.size());
 
-			List<Transfer> recentTransfers = new ArrayList<>();
-			for (List<Transfer> tList : receiverMap.values()) {
-				recentTransfers.addAll(tList);
-			}
+        // 2. 후보 Relayer를 검토
+        for (Map.Entry<String, List<Transfer>> entry : senderToTransfers.entrySet()) {
+            String potentialRelayer = entry.getKey();
+            List<Transfer> transfers = entry.getValue();
 
-			// 시간 기준 정렬
-			recentTransfers.sort(Comparator.comparing(t -> t.getTransaction().getTimestamp()));
+            System.out.println("[Relayer] 후보 주소 검사 중: " + potentialRelayer);
 
-			// 3. 5분 이내 전송된 Transfer가 3개 이상이고, 수신자들이 입금 기록 없으면 relayer 후보
-			List<Transfer> group = new ArrayList<>();
-			LocalDateTime baseTime = null;
+            // 수신자별 그룹핑
+            Map<String, List<Transfer>> receiverMap = new HashMap<>();
+            for (Transfer t : transfers) {
+                receiverMap.computeIfAbsent(t.getReceiver(), r -> new ArrayList<>()).add(t);
+            }
 
-			for (Transfer t : recentTransfers) {
-				LocalDateTime tTime = t.getTransaction().getTimestamp();
-				if (baseTime == null || Duration.between(baseTime, tTime).getSeconds() <= TIME_THRESHOLD_SEC) {
-					if (baseTime == null) baseTime = tTime;
-					group.add(t);
-				} else {
-					baseTime = tTime;
-					group.clear();
-					group.add(t);
-				}
+            List<Transfer> recentTransfers = new ArrayList<>();
+            for (List<Transfer> tList : receiverMap.values()) {
+                recentTransfers.addAll(tList);
+            }
 
-				if (group.size() >= MIN_RELAY_COUNT) {
-					// 수신자의 입금 이력 확인
-					boolean allReceiversHaveNoIncoming = group.stream()
-							.map(Transfer::getReceiver)
-							.distinct()
-							.allMatch(receiver -> wallets.stream()
-									.noneMatch(w -> w.getAddress().equals(receiver) &&
-											w.getTransactions().stream()
-													.flatMap(tx -> tx.getTransfers().stream())
-													.anyMatch(t2 -> receiver.equals(t2.getSender()))
-									));
+            // 시간 기준 정렬
+            recentTransfers.sort(Comparator.comparing(t -> t.getTransaction().getTimestamp()));
 
-					if (allReceiversHaveNoIncoming) {
-						// 해당 relayer 주소로 등록된 모든 지갑에 패턴 표시
-						for (Wallet w : wallets) {
-							if (w.getAddress().equals(potentialRelayer)) {
-								w.setRelayerPattern(true);
-								w.setPatternCnt(w.getPatternCnt() + 1);
-								walletRepository.save(w);
-								System.out.println("[Relayer] 패턴 감지됨: " + potentialRelayer);
-							}
-						}
-						break;
-					}
-				}
-			}
-		}
-	}
+            // 3. 시간 간격 내 그룹핑 및 relayer 패턴 확인
+            List<Transfer> group = new ArrayList<>();
+            LocalDateTime baseTime = null;
+
+            for (Transfer t : recentTransfers) {
+                LocalDateTime tTime = t.getTransaction().getTimestamp();
+                if (baseTime == null || Duration.between(baseTime, tTime).getSeconds() <= TIME_THRESHOLD_SEC) {
+                    if (baseTime == null) baseTime = tTime;
+                    group.add(t);
+                } else {
+                    baseTime = tTime;
+                    group.clear();
+                    group.add(t);
+                }
+
+                if (group.size() >= MIN_RELAY_COUNT) {
+                    System.out.println("[Relayer] 시간 조건 충족: " + potentialRelayer + ", 트랜잭션 수=" + group.size());
+
+                    // 수신자의 입금 이력 확인
+                    boolean allReceiversHaveNoIncoming = group.stream()
+                            .map(Transfer::getReceiver)
+                            .distinct()
+                            .allMatch(receiver -> wallets.stream()
+                                    .noneMatch(w -> w.getAddress().equals(receiver) &&
+                                            w.getTransactions().stream()
+                                                    .flatMap(tx -> tx.getTransfers().stream())
+                                                    .anyMatch(t2 -> receiver.equals(t2.getSender()))
+                                    ));
+
+                    if (allReceiversHaveNoIncoming) {
+                        System.out.println("[Relayer] 수신자 조건 충족: " + potentialRelayer);
+
+                        // 해당 relayer 주소로 등록된 모든 지갑에 패턴 표시
+                        for (Wallet w : wallets) {
+                            if (w.getAddress().equals(potentialRelayer)) {
+                                w.setRelayerPattern(true);
+                                w.setPatternCnt(w.getPatternCnt() + 1);
+                                walletRepository.save(w);
+                                System.out.println("[Relayer] 패턴 감지됨: " + potentialRelayer);
+                            }
+                        }
+                        break;
+                    } else {
+                        System.out.println("[Relayer] 수신자 입금 이력 존재: " + potentialRelayer);
+                    }
+                }
+            }
+        }
+
+        System.out.println("[Relayer] 분석 완료");
+    }
 }

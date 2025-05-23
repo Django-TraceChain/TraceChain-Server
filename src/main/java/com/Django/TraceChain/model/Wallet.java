@@ -22,7 +22,7 @@ public class Wallet {
     private String address;      // 지갑 주소 (기본키, NOT NULL)
 
     @Column(nullable = false)
-    private int type;            // 지갑 유형 (1 = 비트코인 or 0 = 이더리움, NOT NULL)
+    private int type;            // 지갑 유형 (1 = 비트코인 or 2 = 이더리움, NOT NULL)
 
     @Column(nullable = false)
     private long balance;        // 보유 금액 (satoshi 등, NOT NULL)

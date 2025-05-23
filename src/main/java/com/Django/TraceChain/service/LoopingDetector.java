@@ -28,20 +28,24 @@ public class LoopingDetector implements MixingDetector {
 
 		for (Wallet wallet : wallets) {
 			String start = wallet.getAddress();
+			System.out.println("[Looping] 분석 시작: " + start);
+
 			Set<String> visited = new HashSet<>();
 			List<String> path = new ArrayList<>();
 			List<List<String>> loopPaths = new ArrayList<>();
 
 			findLoops(start, start, graph, visited, path, loopPaths, 0);
 
-			if (!loopPaths.isEmpty() && !Boolean.TRUE.equals(wallet.getLoopingPattern())) {
-				wallet.setLoopingPattern(true);
+			boolean detected = !loopPaths.isEmpty();
+			wallet.setLoopingPattern(detected);
+
+			if (detected && !Boolean.TRUE.equals(wallet.getLoopingPattern())) {
 				wallet.setPatternCnt(wallet.getPatternCnt() + 1);
 
-				System.out.println("▶ LOOP DETECTED for wallet: " + start);
-				System.out.println("▶ Loop count: " + loopPaths.size());
+				System.out.println("[Looping] 패턴 감지됨: " + start);
+				System.out.println("[Looping] 루프 개수: " + loopPaths.size());
 				loopPaths.forEach(lp ->
-						System.out.println("▶ Loop path: " + String.join(" → ", lp))
+					System.out.println("[Looping] 루프 경로: " + String.join(" → ", lp))
 				);
 
 				List<Transaction> originalTransactions = wallet.getTransactions();
@@ -52,13 +56,17 @@ public class LoopingDetector implements MixingDetector {
 						.limit(10)
 						.map(tx -> transactionRepository.findById(tx.getTxID()).orElse(null))
 						.filter(Objects::nonNull)
-						.collect(Collectors.collectingAndThen(Collectors.toList(), ArrayList::new)); // ✅ 변경된 부분
+						.collect(Collectors.collectingAndThen(Collectors.toList(), ArrayList::new));
 
 				wallet.setTransactions(limited);
-				walletRepository.saveAndFlush(wallet);
+			} else if (!detected) {
+				System.out.println("[Looping] 패턴 없음: " + start);
 			}
+
+			walletRepository.saveAndFlush(wallet);
 		}
 	}
+
 
 	private Map<String, Set<String>> buildGraph(List<Wallet> wallets) {
 		Map<String, Set<String>> graph = new HashMap<>();

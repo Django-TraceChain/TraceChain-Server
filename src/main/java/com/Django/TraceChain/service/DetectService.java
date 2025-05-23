@@ -23,7 +23,7 @@ public class DetectService {
 	    int type = wallets.get(0).getType();
 
 	    for (MixingDetector detector : detectors) {
-	        if (type == 0 && detector instanceof PeelChainDetector) {
+	        if (type == 2 && detector instanceof PeelChainDetector) {
 	            continue;  // type 0이면 PeelChainDetector 제외
 	        }
 	        if (type == 1 && detector instanceof RelayerDetector) {
