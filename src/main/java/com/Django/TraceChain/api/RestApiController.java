@@ -4,7 +4,6 @@ import com.Django.TraceChain.dto.*;
 import com.Django.TraceChain.model.Wallet;
 import com.Django.TraceChain.service.*;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,7 +26,6 @@ public class RestApiController {
     @GetMapping("/search")
     public ResponseEntity<WalletDto> search(@RequestParam String address,
                                             @RequestParam(defaultValue = "bitcoin") String chain) {
-        
         Wallet wallet = walletService.findAddress(chain, address);
         wallet.setTransactions(walletService.getTransactions(chain, address));
         return ResponseEntity.ok(DtoMapper.mapWallet(wallet));
@@ -37,7 +35,6 @@ public class RestApiController {
     public ResponseEntity<WalletDto> searchLimited(@RequestParam String address,
                                                    @RequestParam(defaultValue = "bitcoin") String chain,
                                                    @RequestParam(defaultValue = "10") int limit) {
-        
         Wallet wallet = walletService.findAddress(chain, address);
         wallet.setTransactions(walletService.getTransactions(chain, address, limit));
         return ResponseEntity.ok(DtoMapper.mapWallet(wallet));
@@ -80,25 +77,18 @@ public class RestApiController {
 
     @GetMapping("/detect")
     public ResponseEntity<List<WalletDto>> detectAllPatterns() {
-        // 1. 모든 지갑을 가져옴
         List<Wallet> wallets = walletService.getAllWallets();
-
-
-        // 2. 모든 탐지기 실행
         detectService.runAllDetectors(wallets);
-
-        // 3. 결과 매핑 및 반환
         List<WalletDto> results = wallets.stream()
-                                         .map(DtoMapper::mapWallet)
-                                         .collect(Collectors.toList());
-
+                .map(DtoMapper::mapWallet)
+                .collect(Collectors.toList());
         return ResponseEntity.ok(results);
     }
 
     @PostMapping("/detect-selected")
     public ResponseEntity<List<WalletDto>> detectSelected(@RequestBody List<String> addresses) {
         if (addresses == null || addresses.isEmpty()) {
-            return ResponseEntity.badRequest().build(); // 주소 없으면 400 에러
+            return ResponseEntity.badRequest().build();
         }
 
         List<Wallet> wallets = addresses.stream()
@@ -113,6 +103,46 @@ public class RestApiController {
                 .collect(Collectors.toList());
 
         return ResponseEntity.ok(results);
+    }
+
+    @GetMapping("/search-by-time")
+    public ResponseEntity<WalletDto> searchByTime(@RequestParam String address,
+                                                  @RequestParam long start,
+                                                  @RequestParam long end,
+                                                  @RequestParam(defaultValue = "50") int limit,
+                                                  @RequestParam(defaultValue = "ethereum") String chain) {
+        Wallet wallet = walletService.findAddress(chain, address);
+
+        if ("ethereum".equalsIgnoreCase(chain)) {
+            EthereumClient ethClient = (EthereumClient) walletService.getClient(chain);
+            ethClient.getTransactionsByTimeRange(address, start, end, limit);
+        }
+
+        wallet.setTransactions(walletService.getTransactions(chain, address));
+        return ResponseEntity.ok(DtoMapper.mapWallet(wallet));
+    }
+
+    @GetMapping("/trace-by-time")
+    public ResponseEntity<List<WalletDto>> traceByTime(@RequestParam String address,
+                                                       @RequestParam long start,
+                                                       @RequestParam long end,
+                                                       @RequestParam(defaultValue = "2") int maxDepth,
+                                                       @RequestParam(defaultValue = "50") int limit,
+                                                       @RequestParam(defaultValue = "ethereum") String chain) {
+        Set<String> visited = new HashSet<>();
+
+        if ("ethereum".equalsIgnoreCase(chain)) {
+            EthereumClient ethClient = (EthereumClient) walletService.getClient(chain);
+            ethClient.traceTransactionsByTimeRange(address, 0, maxDepth, start, end, limit, visited);
+        }
+
+        List<WalletDto> result = visited.stream()
+                .map(addr -> walletService.findAddress(chain, addr))
+                .filter(Objects::nonNull)
+                .map(DtoMapper::mapWallet)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(result);
     }
 
 }

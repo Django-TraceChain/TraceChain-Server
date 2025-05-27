@@ -28,7 +28,7 @@ public class WalletService {
         this.walletRepository = walletRepository;
     }
 
-    private ChainClient getClient(String chainType) {
+    public ChainClient getClient(String chainType) {
         return chainClients.stream()
                 .filter(client -> client.supports(chainType))
                 .findFirst()

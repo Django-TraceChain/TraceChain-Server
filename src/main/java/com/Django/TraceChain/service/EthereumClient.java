@@ -43,13 +43,12 @@ public class EthereumClient implements ChainClient {
     }
 
     private Wallet safeFindOrCreateWallet(String address) {
-        return walletRepository.findById(address).orElseGet(() -> {
-            try {
-                return walletRepository.save(new Wallet(address, 2, 0L));
-            } catch (Exception e) {
-                return walletRepository.findById(address).orElse(null);
-            }
-        });
+        try {
+            return walletRepository.findById(address).orElseGet(() -> walletRepository.save(new Wallet(address, 2, 0L)));
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
     }
 
     @Override
@@ -64,6 +63,10 @@ public class EthereumClient implements ChainClient {
             long balance = new BigDecimal(result).divide(BigDecimal.TEN.pow(18)).longValue();
 
             Wallet wallet = safeFindOrCreateWallet(address);
+            if (wallet == null) {
+                System.out.println(" Wallet 생성 실패");
+                return null;
+            }
             wallet.setBalance(balance);
             walletRepository.save(wallet);
             return wallet;
@@ -255,4 +258,136 @@ public class EthereumClient implements ChainClient {
             traceLimitedTransactionsRecursive(next, depth + 1, maxDepth, depthMap, visited);
         }
     }
+
+
+    // 사례 데이터 쌓을때 시간으로
+    private long getBlockNumberByTimestamp(long timestamp) {
+        try {
+            String url = apiUrl
+                    + "?module=block"
+                    + "&action=getblocknobytime"
+                    + "&timestamp=" + timestamp
+                    + "&closest=before"
+                    + "&apikey=" + apiKey;
+
+            RestTemplate restTemplate = new RestTemplate();
+            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
+            JsonNode result = new ObjectMapper().readTree(response.getBody()).path("result");
+
+            return result.asLong(); // 블록 번호 리턴
+        } catch (Exception e) {
+            System.out.println("getBlockNumberByTimestamp error: " + e.getMessage());
+            return 0L; // 실패 시 0 반환
+        }
+    }
+
+
+    @Transactional
+    public List<Transaction> getTransactionsByTimeRange(String address, long startTimestamp, long endTimestamp, int limit) {
+        Map<String, Transaction> txMap = new LinkedHashMap<>();
+        try {
+            long startBlock = getBlockNumberByTimestamp(startTimestamp);
+            long endBlock = getBlockNumberByTimestamp(endTimestamp);
+
+            String url = apiUrl
+                    + "?module=account"
+                    + "&action=txlist"
+                    + "&address=" + address
+                    + "&startblock=" + startBlock
+                    + "&endblock=" + endBlock
+                    + "&page=1"
+                    + "&offset=" + limit
+                    + "&sort=asc"
+                    + "&apikey=" + apiKey;
+
+            RestTemplate restTemplate = new RestTemplate();
+            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
+            JsonNode result = new ObjectMapper().readTree(response.getBody()).path("result");
+
+            if (!result.isArray()) return new ArrayList<>();
+
+            Wallet wallet = safeFindOrCreateWallet(address);
+            Set<String> existingTxIDs = wallet.getTransactions().stream()
+                    .map(Transaction::getTxID).collect(Collectors.toSet());
+
+            for (JsonNode txNode : result) {
+                String txHash = txNode.path("hash").asText();
+                if (txMap.containsKey(txHash) || existingTxIDs.contains(txHash)) continue;
+
+                long value = new BigDecimal(txNode.path("value").asText()).longValue();
+                long timestamp = txNode.path("timeStamp").asLong();
+                LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), ZoneOffset.UTC);
+
+                Transaction tx = new Transaction(txHash, value, time);
+                Transfer t = new Transfer(tx, txNode.path("from").asText(), txNode.path("to").asText(), value);
+                tx.addTransfer(t);
+                tx.getWallets().add(wallet);
+                wallet.addTransaction(tx);
+
+                txMap.put(txHash, tx);
+            }
+
+            transactionRepository.saveAll(txMap.values());
+            walletRepository.save(wallet);
+
+        } catch (Exception e) {
+            System.out.println("Ethereum getTransactionsByTimeRange error: " + e.getMessage());
+        }
+        return new ArrayList<>(txMap.values());
+    }
+
+
+
+
+    @Transactional
+    public void traceTransactionsByTimeRange(String address, int depth, int maxDepth,
+                                             long startTimestamp, long endTimestamp,
+                                             int limit,
+                                             Set<String> visited) {
+        if (depth > maxDepth || visited.contains(address)) return;
+        visited.add(address);
+
+        Wallet wallet = safeFindOrCreateWallet(address);
+        if (wallet == null) return;
+
+        List<Transaction> transactions = getTransactionsByTimeRange(address, startTimestamp, endTimestamp, limit);
+        if (transactions.isEmpty()) return;
+
+        Set<String> existingTxIDs = wallet.getTransactions().stream()
+                .map(Transaction::getTxID).collect(Collectors.toSet());
+
+        List<Transaction> newTransactions = new ArrayList<>();
+
+        for (Transaction tx : transactions) {
+            if (!existingTxIDs.contains(tx.getTxID())) {
+                wallet.addTransaction(tx);
+                newTransactions.add(tx);
+            }
+
+            if (!tx.getWallets().contains(wallet)) {
+                tx.getWallets().add(wallet);
+            }
+
+            tx.getTransfers().forEach(t -> t.setTransaction(tx));
+        }
+
+        transactionRepository.saveAll(newTransactions);
+        walletRepository.save(wallet);
+
+        Set<String> nextAddresses = new HashSet<>();
+        for (Transaction tx : newTransactions) {
+            for (Transfer transfer : tx.getTransfers()) {
+                if (transfer.getSender() != null && !visited.contains(transfer.getSender()))
+                    nextAddresses.add(transfer.getSender());
+                if (transfer.getReceiver() != null && !visited.contains(transfer.getReceiver()))
+                    nextAddresses.add(transfer.getReceiver());
+            }
+        }
+
+        for (String next : nextAddresses) {
+            traceTransactionsByTimeRange(next, depth + 1, maxDepth, startTimestamp, endTimestamp, limit, visited);
+        }
+    }
+
+
 }
