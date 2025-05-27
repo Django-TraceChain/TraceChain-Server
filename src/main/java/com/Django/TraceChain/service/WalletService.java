@@ -66,4 +66,9 @@ public class WalletService {
         return getClient(chainType);
     }
 
+    //그래프에 추가한 녀석만 탐지 돌리는 /detect-selected 구현을 위해 새로 구현
+    public Wallet findByIdSafe(String address) {
+        return walletRepository.findById(address).orElse(null);
+    }
+
 }

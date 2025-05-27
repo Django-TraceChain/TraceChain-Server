@@ -95,6 +95,24 @@ public class RestApiController {
         return ResponseEntity.ok(results);
     }
 
+    @PostMapping("/detect-selected")
+    public ResponseEntity<List<WalletDto>> detectSelected(@RequestBody List<String> addresses) {
+        if (addresses == null || addresses.isEmpty()) {
+            return ResponseEntity.badRequest().build(); // 주소 없으면 400 에러
+        }
 
+        List<Wallet> wallets = addresses.stream()
+                .map(walletService::findByIdSafe)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
+        detectService.runAllDetectors(wallets);
+
+        List<WalletDto> results = wallets.stream()
+                .map(DtoMapper::mapWallet)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(results);
+    }
 
 }
