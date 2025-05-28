@@ -70,5 +70,17 @@ public class WalletService {
     public Wallet findByIdSafe(String address) {
         return walletRepository.findById(address).orElse(null);
     }
+    
+ // 특정 주소의 트랜잭션을 시간 범위와 개수 제한으로 가져오기
+    public List<Transaction> getTransactionsByTimeRange(String chainType, String address, long start, long end, int limit) {
+        return getClient(chainType).getTransactionsByTimeRange(address, start, end, limit);
+    }
+
+    // 시간 범위 기반으로 재귀 추적
+    public void traceTransactionsByTimeRange(String chainType, String address, int depth, int maxDepth,
+                                             long start, long end, int limit, Set<String> visited) {
+        getClient(chainType).traceTransactionsByTimeRange(address, depth, maxDepth, start, end, limit, visited);
+    }
+
 
 }

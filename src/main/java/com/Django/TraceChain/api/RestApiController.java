@@ -110,15 +110,12 @@ public class RestApiController {
                                                   @RequestParam long start,
                                                   @RequestParam long end,
                                                   @RequestParam(defaultValue = "50") int limit,
-                                                  @RequestParam(defaultValue = "ethereum") String chain) {
+                                                  @RequestParam(defaultValue = "bitcoin") String chain) {
         Wallet wallet = walletService.findAddress(chain, address);
 
-        if ("ethereum".equalsIgnoreCase(chain)) {
-            EthereumClient ethClient = (EthereumClient) walletService.getClient(chain);
-            ethClient.getTransactionsByTimeRange(address, start, end, limit);
-        }
+        // 공통 메서드로 대체
+        wallet.setTransactions(walletService.getTransactionsByTimeRange(chain, address, start, end, limit));
 
-        wallet.setTransactions(walletService.getTransactions(chain, address));
         return ResponseEntity.ok(DtoMapper.mapWallet(wallet));
     }
 
@@ -128,13 +125,11 @@ public class RestApiController {
                                                        @RequestParam long end,
                                                        @RequestParam(defaultValue = "2") int maxDepth,
                                                        @RequestParam(defaultValue = "50") int limit,
-                                                       @RequestParam(defaultValue = "ethereum") String chain) {
+                                                       @RequestParam(defaultValue = "bitcoin") String chain) {
         Set<String> visited = new HashSet<>();
 
-        if ("ethereum".equalsIgnoreCase(chain)) {
-            EthereumClient ethClient = (EthereumClient) walletService.getClient(chain);
-            ethClient.traceTransactionsByTimeRange(address, 0, maxDepth, start, end, limit, visited);
-        }
+        // 공통 메서드로 대체
+        walletService.traceTransactionsByTimeRange(chain, address, 0, maxDepth, start, end, limit, visited);
 
         List<WalletDto> result = visited.stream()
                 .map(addr -> walletService.findAddress(chain, addr))
@@ -144,5 +139,6 @@ public class RestApiController {
 
         return ResponseEntity.ok(result);
     }
+
 
 }

@@ -1,6 +1,7 @@
 package com.Django.TraceChain.service;
 
 import com.Django.TraceChain.model.Transaction;
+import java.time.ZoneId;
 import com.Django.TraceChain.model.Transfer;
 import com.Django.TraceChain.model.Wallet;
 import com.Django.TraceChain.repository.TransactionRepository;
@@ -283,6 +284,102 @@ public class BitcoinClient implements ChainClient {
             }
 
             traceTransactionsRecursiveInternal(sender, depth + 1, maxDepth, visited, depthMap, limit, limited);
+        }
+    }
+    
+    @Transactional
+    public List<Transaction> getTransactionsByTimeRange(String address, long start, long end, int limit) {
+        String token = accessToken.getAccessToken();
+        if (token == null) {
+            System.out.println("[getTransactionsByTimeRange] No access token available.");
+            return Collections.emptyList();
+        }
+
+        RestTemplate restTemplate = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        List<Transaction> transactions = new ArrayList<>();
+        Set<String> seenTxids = new HashSet<>();
+
+        String lastSeenTxid = null;
+        boolean more = true;
+
+        try {
+            while (more && transactions.size() < limit) {
+                String requestUrl = (lastSeenTxid != null)
+                        ? apiUrl + "/address/" + address + "/txs/chain/" + lastSeenTxid
+                        : apiUrl + "/address/" + address + "/txs";
+
+                ResponseEntity<String> response = restTemplate.exchange(requestUrl, HttpMethod.GET, entity, String.class);
+                JsonNode rootArray = new ObjectMapper().readTree(response.getBody());
+
+                if (!rootArray.isArray() || rootArray.size() == 0) break;
+
+                for (JsonNode txNode : rootArray) {
+                    if (transactions.size() >= limit) {
+                        more = false;
+                        break;
+                    }
+
+                    String txid = txNode.path("txid").asText();
+                    if (seenTxids.contains(txid)) continue;
+                    seenTxids.add(txid);
+
+                    long blockTime = txNode.path("status").path("block_time").asLong(0);
+                    if (blockTime == 0) continue;
+
+                    if (blockTime < start) {
+                        more = false; // 시간 범위 벗어남, 더 조회하지 않음
+                        break;
+                    }
+
+                    if (blockTime <= end) {
+                        Optional<Transaction> existing = transactionRepository.findById(txid);
+                        Transaction tx = existing.orElseGet(() -> parseTransaction(txNode, address));
+                        if (existing.isEmpty()) tx = saveTransaction(tx);
+
+                        transactions.add(tx);
+                    }
+
+                    lastSeenTxid = txid;
+                }
+
+                if (rootArray.size() < 25) more = false;
+            }
+        } catch (Exception e) {
+            System.err.println("[getTransactionsByTimeRange] error: " + e.getMessage());
+            throw new RuntimeException("Failed to fetch transactions by time range", e);
+        }
+
+        return transactions;
+    }
+
+    @Transactional
+    public void traceTransactionsByTimeRange(String address, int depth, int maxDepth,
+                                             long start, long end, int limit, Set<String> visited) {
+        if (depth > maxDepth || visited.contains(address)) {
+            return;
+        }
+
+        visited.add(address);
+
+        List<Transaction> transactions = getTransactionsByTimeRange(address, start, end, limit);
+
+        List<String> toVisit = new ArrayList<>();
+
+        for (Transaction tx : transactions) {
+            for (Transfer transfer : tx.getTransfers()) {
+                String sender = transfer.getSender();
+                if (!visited.contains(sender)) {
+                    toVisit.add(sender);
+                }
+            }
+        }
+
+        for (String sender : toVisit) {
+            traceTransactionsByTimeRange(sender, depth + 1, maxDepth, start, end, limit, visited);
         }
     }
 
