@@ -20,7 +20,7 @@ public class LoopingDetector implements MixingDetector {
     @Autowired
     private TransactionRepository transactionRepository;
 
-    private static final int MAX_DEPTH = 5;
+    private static final int MAX_DEPTH = 4;
 
     @Override
     public void analyze(List<Wallet> wallets) {
@@ -34,18 +34,15 @@ public class LoopingDetector implements MixingDetector {
             List<String> path = new ArrayList<>();
             List<List<String>> loopPaths = new ArrayList<>();
 
-            findLoops(start, start, graph, visited, path, loopPaths, 0);
-
-            boolean detected = !loopPaths.isEmpty();
+            boolean detected = findLoops(start, start, graph, visited, path, loopPaths, 0);
 
             if (detected && !Boolean.TRUE.equals(wallet.getLoopingPattern())) {
                 wallet.setPatternCnt(wallet.getPatternCnt() + 1);
                 wallet.setLoopingPattern(true);
 
                 System.out.println("[Looping] 패턴 감지됨: " + start);
-                System.out.println("[Looping] 루프 개수: " + loopPaths.size());
                 loopPaths.forEach(lp ->
-                    System.out.println("[Looping] 루프 경로: " + String.join(" → ", lp))
+                        System.out.println("[Looping] 루프 경로: " + String.join(" → ", lp))
                 );
 
                 List<Transaction> originalTransactions = wallet.getTransactions();
@@ -91,13 +88,13 @@ public class LoopingDetector implements MixingDetector {
         return graph;
     }
 
-    private void findLoops(String start, String current,
-                           Map<String, Set<String>> graph,
-                           Set<String> visited,
-                           List<String> path,
-                           List<List<String>> foundLoops,
-                           int depth) {
-        if (depth > MAX_DEPTH) return;
+    private boolean findLoops(String start, String current,
+                              Map<String, Set<String>> graph,
+                              Set<String> visited,
+                              List<String> path,
+                              List<List<String>> foundLoops,
+                              int depth) {
+        if (depth > MAX_DEPTH) return false;
 
         visited.add(current);
         path.add(current);
@@ -105,9 +102,17 @@ public class LoopingDetector implements MixingDetector {
         for (String neighbor : graph.getOrDefault(current, Collections.emptySet())) {
             if (neighbor.equals(start) && path.size() > 1) {
                 foundLoops.add(new ArrayList<>(path));
+                return true; // 루프 발견 시 즉시 종료
             } else if (!visited.contains(neighbor)) {
-                findLoops(start, neighbor, graph, new HashSet<>(visited), new ArrayList<>(path), foundLoops, depth + 1);
+                boolean found = findLoops(start, neighbor, graph,
+                        new HashSet<>(visited),
+                        new ArrayList<>(path),
+                        foundLoops,
+                        depth + 1);
+                if (found) return true; // 자식 노드에서 루프 발견 시 즉시 종료
             }
         }
+
+        return false;
     }
 }

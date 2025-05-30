@@ -53,7 +53,7 @@ public class RelayerDetector implements MixingDetector {
     @Autowired
     private WalletRepository walletRepository;
 
-    private static final int TIME_THRESHOLD_SEC = 300; // 5분
+    private static final int TIME_THRESHOLD_SEC = 600; // 5분
     private static final int MIN_RELAY_COUNT = 3;
 
     @Transactional
