@@ -24,18 +24,27 @@ public class DetectService {
 
 		int type = wallets.get(0).getType();
 
-		// 🔍 pattern_cnt가 null인 지갑만 탐지 대상으로 설정 (Objects.isNull 사용)
-		List<Wallet> filtered = wallets.stream()
-				.filter(wallet -> Objects.isNull(wallet.getPatternCnt()))
-				.collect(Collectors.toList());
-
-		if (filtered.isEmpty()) return;
-
 		for (MixingDetector detector : detectors) {
+
+			// PeelChainDetector는 type==2에서 제외
 			if (type == 2 && detector instanceof PeelChainDetector) continue;
+
+			// RelayerDetector는 type==1에서 제외
 			if (type == 1 && detector instanceof RelayerDetector) continue;
 
-			detector.analyze(filtered);
+			// FixedAmountDetector만 fixedAmountPattern == null 필터링
+			if (detector instanceof FixedAmountDetector) {
+				List<Wallet> filtered = wallets.stream()
+						.filter(wallet -> wallet.getFixedAmountPattern() == null)
+						.collect(Collectors.toList());
+
+				if (!filtered.isEmpty()) {
+					detector.analyze(filtered);
+				}
+			} else {
+				// 다른 탐지기는 전체 대상 (원래 로직 유지)
+				detector.analyze(wallets);
+			}
 		}
 	}
 }
