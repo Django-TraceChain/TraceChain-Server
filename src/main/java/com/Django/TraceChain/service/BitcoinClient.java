@@ -57,13 +57,13 @@ public class BitcoinClient implements ChainClient {
     @Override
     @Transactional
     public Wallet findAddress(String address) {
-        // 중복 방지: 이미 존재하면 그대로 반환
         Optional<Wallet> optionalWallet = walletRepository.findById(address);
-        if (optionalWallet.isPresent()) return optionalWallet.get();
+        if (optionalWallet.isPresent()) {
+            System.out.println("존재하는 지갑: " + address);
+            return optionalWallet.get(); // newlyFetched는 false 그대로
+        }
 
         String token = accessToken.getAccessToken();
-        //if (token == null) return new Wallet(address, 1, 0L); // fallback only
-
         RestTemplate restTemplate = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -80,12 +80,16 @@ public class BitcoinClient implements ChainClient {
             long balance = funded - spent;
 
             Wallet wallet = new Wallet(addr, 1, balance);
+            wallet.setNewlyFetched(true);  // 새로 불러왔음
             return saveWallet(wallet);
         } catch (Exception e) {
             System.out.println("Bitcoin findAddress error: " + e.getMessage());
-            return new Wallet(address, 1, 0L); // fallback only
+            Wallet fallback = new Wallet(address, 1, 0L);
+            fallback.setNewlyFetched(true);
+            return fallback;
         }
     }
+
 
     @Transactional(propagation = Propagation.REQUIRED)
     public Wallet saveWallet(Wallet wallet) {

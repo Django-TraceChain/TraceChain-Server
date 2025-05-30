@@ -20,26 +20,38 @@ public class DetectService {
 	public void runAllDetectors(List<Wallet> wallets) {
 	    if (wallets.isEmpty()) return;
 
-	    int type = wallets.get(0).getType();
+	    // fixedAmountPattern이 null인 지갑만 필터링
+	    List<Wallet> filteredWallets = wallets.stream()
+	        .filter(wallet -> wallet.getFixedAmountPattern() == null)
+	        .toList();
 
-	    for (MixingDetector detector : detectors) {
-	        if (type == 2 && detector instanceof PeelChainDetector) {
-	            continue;  // type 0이면 PeelChainDetector 제외
+	    if (filteredWallets.isEmpty()) return;
+
+	    // 지갑을 타입별로 분리
+	    List<Wallet> bitcoinWallets = filteredWallets.stream()
+	        .filter(wallet -> wallet.getType() == 1)
+	        .toList();
+
+	    List<Wallet> ethereumWallets = filteredWallets.stream()
+	        .filter(wallet -> wallet.getType() == 2)
+	        .toList();
+
+	    // 비트코인 지갑 분석 (RelayerDetector 제외)
+	    if (!bitcoinWallets.isEmpty()) {
+	        for (MixingDetector detector : detectors) {
+	            if (detector instanceof RelayerDetector) continue;
+	            detector.analyze(bitcoinWallets);
 	        }
-	        if (type == 1 && detector instanceof RelayerDetector) {
-	            continue;  // type 1이면 RelayerDetector 제외
+	    }
+
+	    // 이더리움 지갑 분석 (PeelChainDetector 제외)
+	    if (!ethereumWallets.isEmpty()) {
+	        for (MixingDetector detector : detectors) {
+	            if (detector instanceof PeelChainDetector) continue;
+	            detector.analyze(ethereumWallets);
 	        }
-	        detector.analyze(wallets);
 	    }
 	}
 
-    //임시코드
-    public void runLoopingOnly(List<Wallet> wallets) {
-        for (MixingDetector detector : detectors) {
-            if (detector instanceof LoopingDetector) {
-                detector.analyze(wallets);
-            }
-        }
-    }
 
 }

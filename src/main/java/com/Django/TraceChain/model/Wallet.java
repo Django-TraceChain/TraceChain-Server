@@ -3,6 +3,8 @@ package com.Django.TraceChain.model;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.springframework.data.annotation.Transient;
+
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -45,6 +47,9 @@ public class Wallet {
 
     @Column(nullable = true)
     private int patternCnt;
+    
+    @Transient
+    private boolean newlyFetched = false;
 
     // 다대다 관계: Wallet ↔ Transaction
     @ManyToMany(cascade = {CascadeType.PERSIST, CascadeType.MERGE}, fetch = FetchType.LAZY)
@@ -147,5 +152,13 @@ public class Wallet {
                 tx.getWallets().add(this);
             }
         }
+    }
+    
+    public boolean isNewlyFetched() {
+        return newlyFetched;
+    }
+
+    public void setNewlyFetched(boolean newlyFetched) {
+        this.newlyFetched = newlyFetched;
     }
 }

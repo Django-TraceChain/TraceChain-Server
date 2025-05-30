@@ -53,7 +53,16 @@ public class EthereumClient implements ChainClient {
     }
 
     @Override
+    @Transactional
     public Wallet findAddress(String address) {
+        // DB에 이미 존재하는 지갑 확인
+        Optional<Wallet> optionalWallet = walletRepository.findById(address);
+        if (optionalWallet.isPresent()) {
+            Wallet wallet = optionalWallet.get();
+            System.out.println("존재하는 지갑: " + address);
+            return wallet;
+        }
+
         try {
             String url = apiUrl + "?module=account&action=balance&address=" + address + "&tag=latest&apikey=" + apiKey;
             RestTemplate restTemplate = new RestTemplate();
@@ -65,17 +74,21 @@ public class EthereumClient implements ChainClient {
 
             Wallet wallet = safeFindOrCreateWallet(address);
             if (wallet == null) {
-                System.out.println(" Wallet 생성 실패");
+                System.out.println("Wallet 생성 실패");
                 return null;
             }
+
             wallet.setBalance(balance);
+            wallet.setNewlyFetched(true);  // 새로 생성된 지갑임을 표시
             walletRepository.save(wallet);
             return wallet;
+
         } catch (Exception e) {
             System.out.println("Ethereum findAddress error: " + e.getMessage());
             return null;
         }
     }
+
 
     @Override
     @Transactional
