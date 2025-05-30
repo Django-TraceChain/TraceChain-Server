@@ -62,13 +62,17 @@ public class FixedAmountDetector implements MixingDetector {
                 if (detected) break;
             }
 
-            wallet.setFixedAmountPattern(detected);
             if (detected) {
-                wallet.setPatternCnt(wallet.getPatternCnt() + 1);
+                if (!Boolean.TRUE.equals(wallet.getFixedAmountPattern())) {  // 처음 감지 시에만 증가
+                    wallet.setPatternCnt(wallet.getPatternCnt() + 1);
+                }
+                wallet.setFixedAmountPattern(true);
                 System.out.println("[FixedAmount] 패턴 감지됨: " + walletAddress);
             } else {
+                wallet.setFixedAmountPattern(false);
                 System.out.println("[FixedAmount] 패턴 없음: " + walletAddress);
             }
+
 
             walletRepository.save(wallet);
         }

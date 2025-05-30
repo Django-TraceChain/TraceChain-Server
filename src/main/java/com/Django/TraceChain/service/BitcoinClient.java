@@ -114,7 +114,7 @@ public class BitcoinClient implements ChainClient {
         for (JsonNode vin : txNode.path("vin")) {
             String sender = vin.path("prevout").path("scriptpubkey_address").asText(null);
             long value = vin.path("prevout").path("value").asLong(0);
-            if (sender == null || sender.isEmpty()) sender = "unknown";
+            if (sender == null || sender.isEmpty()) sender = ownerAddress;  // unknown 대신 ownerAddress
             Transfer t = new Transfer(tx, sender, ownerAddress, value);
             tx.addTransfer(t);
         }
@@ -122,10 +122,11 @@ public class BitcoinClient implements ChainClient {
         for (JsonNode vout : txNode.path("vout")) {
             String receiver = vout.path("scriptpubkey_address").asText(null);
             long value = vout.path("value").asLong(0);
-            if (receiver == null || receiver.isEmpty()) receiver = "unknown";
+            if (receiver == null || receiver.isEmpty()) receiver = ownerAddress;  // unknown 대신 ownerAddress
             Transfer t = new Transfer(tx, ownerAddress, receiver, value);
             tx.addTransfer(t);
         }
+
 
         return tx;
     }
