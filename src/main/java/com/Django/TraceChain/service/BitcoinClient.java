@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
 @Service("bitcoinClient")
 public class BitcoinClient implements ChainClient {
 
-    private final AccessToken accessToken;
+	private final AccessToken accessToken;
     private final WalletRepository walletRepository;
     private final TransactionRepository transactionRepository;
 
@@ -56,8 +56,12 @@ public class BitcoinClient implements ChainClient {
     @Override
     @Transactional
     public Wallet findAddress(String address) {
+        // 중복 방지: 이미 존재하면 그대로 반환
+        Optional<Wallet> optionalWallet = walletRepository.findById(address);
+        if (optionalWallet.isPresent()) return optionalWallet.get();
+
         String token = accessToken.getAccessToken();
-        if (token == null) return null;
+        //if (token == null) return new Wallet(address, 1, 0L); // fallback only
 
         RestTemplate restTemplate = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
@@ -75,48 +79,54 @@ public class BitcoinClient implements ChainClient {
             long balance = funded - spent;
 
             Wallet wallet = new Wallet(addr, 1, balance);
-            // 직접 merge하지 않고 saveWallet() 호출
-            wallet = saveWallet(wallet);
-            return wallet;
+            return saveWallet(wallet);
         } catch (Exception e) {
             System.out.println("Bitcoin findAddress error: " + e.getMessage());
-            return null;
+            return new Wallet(address, 1, 0L); // fallback only
         }
+    }
+
+    @Transactional(propagation = Propagation.REQUIRED)
+    public Wallet saveWallet(Wallet wallet) {
+        return entityManager.merge(wallet);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRED)
+    public Transaction saveTransaction(Transaction tx) {
+        for (Transfer t : tx.getTransfers()) {
+            t.setTransaction(tx);
+        }
+        return entityManager.merge(tx);
     }
 
     private Transaction parseTransaction(JsonNode txNode, String ownerAddress) {
         String txid = txNode.path("txid").asText();
-        System.out.println("[parseTransaction] Start parsing txid: " + txid);
+        LocalDateTime txTime = LocalDateTime.ofInstant(
+                Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong(0)), ZoneOffset.UTC);
 
-        long amount = 0;
+        long total = 0;
         for (JsonNode vout : txNode.path("vout")) {
-            amount += (long) (vout.path("value").asDouble() * 1e8);
+            total += (long) (vout.path("value").asDouble() * 1e8);
         }
 
-        LocalDateTime txTime = LocalDateTime.ofInstant(
-                Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong()), ZoneOffset.UTC);
-
-        Transaction tx = new Transaction(txid, amount, txTime);
+        Transaction tx = new Transaction(txid, total, txTime);
 
         for (JsonNode vin : txNode.path("vin")) {
             String sender = vin.path("prevout").path("scriptpubkey_address").asText(null);
-            long val = vin.path("prevout").path("value").asLong(0);
-            if (sender == null || sender.isEmpty()) sender = ownerAddress != null ? ownerAddress : "unknown";
-            System.out.printf("[parseTransaction] vin sender: %s, value: %d\n", sender, val);
-            Transfer t = new Transfer(tx, sender, ownerAddress, val);
+            long value = vin.path("prevout").path("value").asLong(0);
+            if (sender == null || sender.isEmpty()) sender = "unknown";
+            Transfer t = new Transfer(tx, sender, ownerAddress, value);
             tx.addTransfer(t);
         }
 
         for (JsonNode vout : txNode.path("vout")) {
             String receiver = vout.path("scriptpubkey_address").asText(null);
-            long val = vout.path("value").asLong(0);
-            if (receiver == null || receiver.isEmpty()) receiver = ownerAddress != null ? ownerAddress : "unknown";
-            System.out.printf("[parseTransaction] vout receiver: %s, value: %d\n", receiver, val);
-            Transfer t = new Transfer(tx, ownerAddress, receiver, val);
+            long value = vout.path("value").asLong(0);
+            if (receiver == null || receiver.isEmpty()) receiver = "unknown";
+            Transfer t = new Transfer(tx, ownerAddress, receiver, value);
             tx.addTransfer(t);
         }
 
-        System.out.println("[parseTransaction] Finished parsing txid: " + txid);
         return tx;
     }
 
@@ -126,72 +136,40 @@ public class BitcoinClient implements ChainClient {
         return getTransactions(address, Integer.MAX_VALUE);
     }
 
-    @Override
     @Transactional
+    @Override
     public List<Transaction> getTransactions(String address, int limit) {
         String token = accessToken.getAccessToken();
-        if (token == null) {
-            System.out.println("[getTransactions] No access token available.");
-            return Collections.emptyList();
-        }
+        if (token == null) return Collections.emptyList();
 
-        Wallet wallet = walletRepository.findById(address)
-                .orElseGet(() -> {
-                    System.out.println("[getTransactions] Wallet not found, creating new wallet for address: " + address);
-                    Wallet newWallet = new Wallet(address, 1, 0L);
-                    return saveWallet(newWallet);
-                });
+        Wallet wallet = findAddress(address);  // 이미 저장되었는지 확인 포함
+        List<Transaction> result = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
 
         RestTemplate restTemplate = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-        Map<String, Transaction> transactionMap = new LinkedHashMap<>();
-        Map<String, Transaction> txCache = new HashMap<>();
-        Set<String> txSeen = new HashSet<>();
-
         String url = apiUrl + "/address/" + address + "/txs";
-        boolean more = true;
-        String lastSeenTxid = null;
+        String lastTxid = null;
 
         try {
-            while (more && transactionMap.size() < limit) {
-                String requestUrl = (lastSeenTxid != null)
-                        ? apiUrl + "/address/" + address + "/txs/chain/" + lastSeenTxid
-                        : url;
+            while (result.size() < limit) {
+                String reqUrl = lastTxid == null ? url : url + "/chain/" + lastTxid;
+                ResponseEntity<String> response = restTemplate.exchange(reqUrl, HttpMethod.GET, entity, String.class);
+                JsonNode txs = new ObjectMapper().readTree(response.getBody());
 
-                ResponseEntity<String> response = restTemplate.exchange(requestUrl, HttpMethod.GET, entity, String.class);
-                JsonNode rootArray = new ObjectMapper().readTree(response.getBody());
+                if (txs.isEmpty()) break;
 
-                if (!rootArray.isArray() || rootArray.size() == 0) {
-                    break;
-                }
-
-                for (JsonNode txNode : rootArray) {
-                    if (transactionMap.size() >= limit) {
-                        more = false;
-                        break;
-                    }
-
+                for (JsonNode txNode : txs) {
                     String txid = txNode.path("txid").asText();
-                    if (txSeen.contains(txid)) continue;
-                    txSeen.add(txid);
+                    if (seen.contains(txid)) continue;
+                    seen.add(txid);
+                    lastTxid = txid;
 
-                    Transaction tx;
-
-                    if (txCache.containsKey(txid)) {
-                        tx = txCache.get(txid);
-                    } else {
-                        Optional<Transaction> optTx = transactionRepository.findById(txid);
-                        if (optTx.isPresent()) {
-                            tx = optTx.get();
-                        } else {
-                            tx = parseTransaction(txNode, address);
-                            tx = saveTransaction(tx);
-                        }
-                        txCache.put(txid, tx);
-                    }
+                    Transaction tx = transactionRepository.findById(txid)
+                            .orElseGet(() -> saveTransaction(parseTransaction(txNode, address)));
 
                     if (!tx.getWallets().contains(wallet)) {
                         tx.getWallets().add(wallet);
@@ -200,40 +178,29 @@ public class BitcoinClient implements ChainClient {
                         wallet.getTransactions().add(tx);
                     }
 
-                    transactionMap.put(txid, tx);
-                    lastSeenTxid = txid;
+                    saveTransaction(tx);
+                    result.add(tx);
+
+                    if (result.size() >= limit) break;
                 }
 
-                if (rootArray.size() < 25) {
-                    more = false;
-                }
+                if (txs.size() < 25) break;
             }
 
             saveWallet(wallet);
         } catch (Exception e) {
-            System.err.println("[getTransactions] error: " + e.getMessage());
-            throw new RuntimeException("Failed to fetch transactions", e);
+            throw new RuntimeException("Fetch failed: " + e.getMessage());
         }
 
-        return new ArrayList<>(transactionMap.values());
+        debugPrintWalletRelations(address);
+        return result;
     }
 
-
-
-    @Transactional(propagation = Propagation.REQUIRED)
-    public Transaction saveTransaction(Transaction tx) {
-        return entityManager.merge(tx);
-    }
-
-    @Transactional(propagation = Propagation.REQUIRED)
-    public Wallet saveWallet(Wallet wallet) {
-        return entityManager.merge(wallet);
-    }
 
     @Override
     @Transactional
     public void traceAllTransactionsRecursive(String address, int depth, int maxDepth, Set<String> visited) {
-        // depthMap은 사용하지 않으므로 null 전달
+        if (visited == null) visited = new HashSet<>();
         traceTransactionsRecursiveInternal(address, depth, maxDepth, visited, null, null, false);
     }
 
@@ -241,6 +208,8 @@ public class BitcoinClient implements ChainClient {
     @Transactional
     public void traceLimitedTransactionsRecursive(String address, int depth, int maxDepth,
                                                   Map<Integer, List<Wallet>> depthMap, Set<String> visited) {
+        if (visited == null) visited = new HashSet<>();
+        if (depthMap == null) depthMap = new TreeMap<>();
         traceTransactionsRecursiveInternal(address, depth, maxDepth, visited, depthMap, 5, true);
     }
 
@@ -248,45 +217,60 @@ public class BitcoinClient implements ChainClient {
     private void traceTransactionsRecursiveInternal(String address, int depth, int maxDepth, Set<String> visited,
                                                     Map<Integer, List<Wallet>> depthMap,
                                                     Integer limit, boolean limited) {
-        if (depth > maxDepth || visited.contains(address)) {
-            return;
-        }
+        System.out.printf("[TRACE] Enter depth=%d, address=%s, visited.size=%d%n", depth, address, visited.size());
 
+        if (depth > maxDepth || visited.contains(address)) return;
         visited.add(address);
 
+        Wallet wallet = walletRepository.findById(address)
+                .orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
+
         List<Transaction> transactions = limited ? getTransactions(address, limit) : getTransactions(address);
+        if (transactions == null || transactions.isEmpty()) return;
 
-        // 동시 수정 방지를 위해 먼저 sender들을 수집
-        List<String> toVisit = new ArrayList<>();
-        Map<String, Transaction> senderTxMap = new HashMap<>();
-
+        Map<String, Transaction> txMap = new LinkedHashMap<>();
         for (Transaction tx : transactions) {
-            for (Transfer transfer : tx.getTransfers()) {
-                String sender = transfer.getSender();
-                if (!visited.contains(sender)) {
-                    toVisit.add(sender);
-                    senderTxMap.put(sender, tx);  // sender -> 해당 tx 매핑
-                }
+            txMap.put(tx.getTxID(), tx);
+            // 지갑-트랜잭션 양방향 연결
+            if (!tx.getWallets().contains(wallet)) tx.getWallets().add(wallet);
+            if (!wallet.getTransactions().contains(tx)) wallet.getTransactions().add(tx);
+        }
+        transactionRepository.saveAll(new ArrayList<>(txMap.values()));
+        walletRepository.save(wallet);
+
+        if (depthMap != null) {
+            depthMap.computeIfAbsent(depth, d -> new ArrayList<>()).add(wallet);
+        }
+
+        // 재귀 대상 주소 수집: 모든 트랜스퍼의 sender/receiver 기준
+        Set<String> nextAddresses = new HashSet<>();
+        for (Transaction tx : txMap.values()) {
+            if (tx.getTransfers() == null) continue;
+            for (Transfer t : tx.getTransfers()) {
+                if (t.getSender() != null && !visited.contains(t.getSender()))
+                    nextAddresses.add(t.getSender());
+                if (t.getReceiver() != null && !visited.contains(t.getReceiver()))
+                    nextAddresses.add(t.getReceiver());
             }
         }
 
-        // 반복문 밖에서 visited 수정 및 재귀 호출
-        for (String sender : toVisit) {
-            visited.add(sender);
+        System.out.printf("[TRACE] 다음 재귀 호출 대상 지갑 수: %d%n", nextAddresses.size());
 
-            // depthMap에 Wallet 추가
-            if (depthMap != null) {
-                Wallet wallet = new Wallet();
-                wallet.setAddress(sender);
-                wallet.setType(1);  // 실제 체인 타입으로 설정 필요
-                wallet.addTransaction(senderTxMap.get(sender));
-                depthMap.computeIfAbsent(depth + 1, k -> new ArrayList<>()).add(wallet);
-            }
-
-            traceTransactionsRecursiveInternal(sender, depth + 1, maxDepth, visited, depthMap, limit, limited);
+        for (String next : nextAddresses) {
+            traceTransactionsRecursiveInternal(next, depth + 1, maxDepth, visited, depthMap, limit, limited);
         }
+
+        if (depth == 0) {
+            System.out.println("========== [DEBUG] 지갑-트랜잭션-트랜스퍼 관계 출력 ==========");
+            debugPrintWalletRelations(address);
+            System.out.println("========== [DEBUG] 출력 끝 ==========");
+        }
+
+        System.out.printf("[TRACE] Exit depth=%d, address=%s%n", depth, address);
     }
-    
+
+
+
     @Transactional
     public List<Transaction> getTransactionsByTimeRange(String address, long start, long end, int limit) {
         String token = accessToken.getAccessToken();
@@ -359,16 +343,23 @@ public class BitcoinClient implements ChainClient {
     @Transactional
     public void traceTransactionsByTimeRange(String address, int depth, int maxDepth,
                                              long start, long end, int limit, Set<String> visited) {
-        if (depth > maxDepth || visited.contains(address)) {
-            return;
-        }
-
+        if (depth > maxDepth || visited.contains(address)) return;
         visited.add(address);
+
+        Wallet currentWallet = walletRepository.findById(address).orElseGet(() -> findAddress(address));
+        currentWallet = saveWallet(currentWallet);
 
         List<Transaction> transactions = getTransactionsByTimeRange(address, start, end, limit);
 
-        List<String> toVisit = new ArrayList<>();
+        for (Transaction tx : transactions) {
+            tx.getWallets().add(currentWallet);
+            currentWallet.getTransactions().add(tx);
+            saveTransaction(tx);
+        }
 
+        currentWallet = saveWallet(currentWallet);
+
+        List<String> toVisit = new ArrayList<>();
         for (Transaction tx : transactions) {
             for (Transfer transfer : tx.getTransfers()) {
                 String sender = transfer.getSender();
@@ -381,6 +372,53 @@ public class BitcoinClient implements ChainClient {
         for (String sender : toVisit) {
             traceTransactionsByTimeRange(sender, depth + 1, maxDepth, start, end, limit, visited);
         }
+
+        if (depth == 0) {
+            debugPrintWalletRelations(address);
+        }
     }
+
+    
+    private void debugPrintWalletRelations(String rootAddress) {
+        System.out.println("\n========== [DEBUG] 지갑-트랜잭션-트랜스퍼 관계 출력 ==========");
+
+        Wallet rootWallet = walletRepository.findById(rootAddress).orElse(null);
+        if (rootWallet == null) {
+            System.out.println("루트 지갑 정보를 찾을 수 없습니다: " + rootAddress);
+            return;
+        }
+
+        Set<String> visitedWallets = new HashSet<>();
+        Queue<Wallet> queue = new LinkedList<>();
+        queue.add(rootWallet);
+
+        while (!queue.isEmpty()) {
+            Wallet wallet = queue.poll();
+            if (!visitedWallets.add(wallet.getAddress())) continue;
+
+            System.out.println("\n[지갑] 주소: " + wallet.getAddress() + " / 잔액: " + wallet.getBalance() + " sats");
+
+            for (Transaction tx : wallet.getTransactions()) {
+                System.out.println("  └─ [트랜잭션] TXID: " + tx.getTxID());
+                for (Transfer transfer : tx.getTransfers()) {
+                    System.out.printf("      └─ [전송] FROM: %s TO: %s AMOUNT: %d sats\n",
+                            transfer.getSender(), transfer.getReceiver(), transfer.getAmount());
+
+                    // 연결된 다른 지갑들도 큐에 추가
+                    if (!visitedWallets.contains(transfer.getSender())) {
+                        Wallet senderWallet = walletRepository.findById(transfer.getSender()).orElse(null);
+                        if (senderWallet != null) queue.add(senderWallet);
+                    }
+                    if (!visitedWallets.contains(transfer.getReceiver())) {
+                        Wallet receiverWallet = walletRepository.findById(transfer.getReceiver()).orElse(null);
+                        if (receiverWallet != null) queue.add(receiverWallet);
+                    }
+                }
+            }
+        }
+
+        System.out.println("========== [DEBUG] 출력 끝 ==========\n");
+    }
+
 
 }
