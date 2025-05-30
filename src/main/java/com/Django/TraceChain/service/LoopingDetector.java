@@ -20,6 +20,14 @@ public class LoopingDetector implements MixingDetector {
     @Autowired
     private TransactionRepository transactionRepository;
 
+	@Override
+	public void analyze(List<Wallet> wallets) {
+		// TODO Auto-generated method stub
+		
+	}
+
+  
+    /*
     private static final int MAX_DEPTH = 5;
 
     @Override
@@ -110,4 +118,5 @@ public class LoopingDetector implements MixingDetector {
             }
         }
     }
+    */
 }

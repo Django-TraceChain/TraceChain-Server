@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 @Service("bitcoinClient")
@@ -105,31 +106,54 @@ public class BitcoinClient implements ChainClient {
                 Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong(0)), ZoneOffset.UTC);
 
         long total = 0;
+        int transferLimit = 30;
         for (JsonNode vout : txNode.path("vout")) {
             total += (long) (vout.path("value").asDouble() * 1e8);
         }
 
         Transaction tx = new Transaction(txid, total, txTime);
 
+        int transferCount = 0;
+
+        // vin 트랜스퍼 추가 (sender -> ownerAddress)
         for (JsonNode vin : txNode.path("vin")) {
+            if (transferCount >= transferLimit) break;
+
             String sender = vin.path("prevout").path("scriptpubkey_address").asText(null);
             long value = vin.path("prevout").path("value").asLong(0);
-            if (sender == null || sender.isEmpty()) sender = ownerAddress;  // unknown 대신 ownerAddress
+
+            if (sender == null || sender.isEmpty()) {
+                sender = ownerAddress;  // null일 경우 검색 주소로 대체
+            }
+
             Transfer t = new Transfer(tx, sender, ownerAddress, value);
             tx.addTransfer(t);
+
+            transferCount++;
         }
 
+        // vout 트랜스퍼 추가 (ownerAddress -> receiver)
         for (JsonNode vout : txNode.path("vout")) {
+            if (transferCount >= transferLimit) break;
+
             String receiver = vout.path("scriptpubkey_address").asText(null);
             long value = vout.path("value").asLong(0);
-            if (receiver == null || receiver.isEmpty()) receiver = ownerAddress;  // unknown 대신 ownerAddress
+
+            if (receiver == null || receiver.isEmpty()) {
+                receiver = ownerAddress;  // null일 경우 검색 주소로 대체
+            }
+
             Transfer t = new Transfer(tx, ownerAddress, receiver, value);
             tx.addTransfer(t);
-        }
 
+            transferCount++;
+        }
 
         return tx;
     }
+
+
+
 
     @Transactional
     @Override
