@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-@CrossOrigin(origins="http://localhost:5173")
 @RestController
 @RequestMapping("/api")
 public class RestApiController {
@@ -28,11 +27,7 @@ public class RestApiController {
     public ResponseEntity<WalletDto> search(@RequestParam String address,
                                             @RequestParam(defaultValue = "bitcoin") String chain) {
         Wallet wallet = walletService.findAddress(chain, address);
-
-        if (wallet.isNewlyFetched()) {
-            wallet.setTransactions(walletService.getTransactions(chain, address));
-        }
-
+        wallet.setTransactions(walletService.getTransactions(chain, address));
         return ResponseEntity.ok(DtoMapper.mapWallet(wallet));
     }
 
@@ -41,14 +36,9 @@ public class RestApiController {
                                                    @RequestParam(defaultValue = "bitcoin") String chain,
                                                    @RequestParam(defaultValue = "10") int limit) {
         Wallet wallet = walletService.findAddress(chain, address);
-
-        if (wallet.isNewlyFetched()) {
-            wallet.setTransactions(walletService.getTransactions(chain, address, limit));
-        }
-
+        wallet.setTransactions(walletService.getTransactions(chain, address, limit));
         return ResponseEntity.ok(DtoMapper.mapWallet(wallet));
     }
-
 
     @GetMapping("/trace")
     public ResponseEntity<Set<String>> trace(@RequestParam String address,
