@@ -1,6 +1,8 @@
 package com.Django.TraceChain.service;
 
 import com.Django.TraceChain.model.Transaction;
+
+import java.math.BigDecimal;
 import java.time.ZoneId;
 import com.Django.TraceChain.model.Transfer;
 import com.Django.TraceChain.model.Wallet;
@@ -60,7 +62,7 @@ public class BitcoinClient implements ChainClient {
         Optional<Wallet> optionalWallet = walletRepository.findById(address);
         if (optionalWallet.isPresent()) {
             System.out.println("존재하는 지갑: " + address);
-            return optionalWallet.get(); // newlyFetched는 false 그대로
+            return optionalWallet.get();
         }
 
         String token = accessToken.getAccessToken();
@@ -75,20 +77,22 @@ public class BitcoinClient implements ChainClient {
             JsonNode root = new ObjectMapper().readTree(response.getBody());
 
             String addr = root.path("address").asText();
-            long funded = root.path("chain_stats").path("funded_txo_sum").asLong();
-            long spent = root.path("chain_stats").path("spent_txo_sum").asLong();
-            long balance = funded - spent;
+            BigDecimal funded = new BigDecimal(root.path("chain_stats").path("funded_txo_sum").asLong());
+            BigDecimal spent = new BigDecimal(root.path("chain_stats").path("spent_txo_sum").asLong());
+            BigDecimal balance = funded.subtract(spent).divide(BigDecimal.valueOf(1e8)); // BTC 단위로 변환
 
             Wallet wallet = new Wallet(addr, 1, balance);
-            wallet.setNewlyFetched(true);  // 새로 불러왔음
+            wallet.setNewlyFetched(true);
             return saveWallet(wallet);
+
         } catch (Exception e) {
             System.out.println("Bitcoin findAddress error: " + e.getMessage());
-            Wallet fallback = new Wallet(address, 1, 0L);
+            Wallet fallback = new Wallet(address, 1, BigDecimal.ZERO);
             fallback.setNewlyFetched(true);
             return fallback;
         }
     }
+
 
 
     @Transactional(propagation = Propagation.REQUIRED)
@@ -109,52 +113,55 @@ public class BitcoinClient implements ChainClient {
         LocalDateTime txTime = LocalDateTime.ofInstant(
                 Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong(0)), ZoneOffset.UTC);
 
-        long total = 0;
+        BigDecimal total = BigDecimal.ZERO;
         int transferLimit = 30;
+
+        // 총 전송 금액을 BTC 단위로 계산
         for (JsonNode vout : txNode.path("vout")) {
-            total += (long) (vout.path("value").asDouble() * 1e8);
+            long valueSatoshi = vout.path("value").asLong(0);  // Satoshi
+            BigDecimal valueBTC = BigDecimal.valueOf(valueSatoshi).divide(BigDecimal.valueOf(1e8));  // Satoshi → BTC
+            total = total.add(valueBTC);
         }
 
-        Transaction tx = new Transaction(txid, total, txTime);
+        Transaction tx = new Transaction(txid, total, txTime);  // BTC 단위로 저장
 
         int transferCount = 0;
 
-        // vin 트랜스퍼 추가 (sender -> ownerAddress)
+        // vin 처리 (입력)
         for (JsonNode vin : txNode.path("vin")) {
             if (transferCount >= transferLimit) break;
 
             String sender = vin.path("prevout").path("scriptpubkey_address").asText(null);
-            long value = vin.path("prevout").path("value").asLong(0);
+            long value = vin.path("prevout").path("value").asLong(0);  // Satoshi 단위
 
             if (sender == null || sender.isEmpty()) {
-                sender = ownerAddress;  // null일 경우 검색 주소로 대체
+                sender = ownerAddress;
             }
 
-            Transfer t = new Transfer(tx, sender, ownerAddress, value);
+            Transfer t = new Transfer(tx, sender, ownerAddress, value);  // 여전히 Satoshi 단위
             tx.addTransfer(t);
-
             transferCount++;
         }
 
-        // vout 트랜스퍼 추가 (ownerAddress -> receiver)
+        // vout 처리 (출력)
         for (JsonNode vout : txNode.path("vout")) {
             if (transferCount >= transferLimit) break;
 
             String receiver = vout.path("scriptpubkey_address").asText(null);
-            long value = vout.path("value").asLong(0);
+            long value = vout.path("value").asLong(0);  // Satoshi 단위
 
             if (receiver == null || receiver.isEmpty()) {
-                receiver = ownerAddress;  // null일 경우 검색 주소로 대체
+                receiver = ownerAddress;
             }
 
             Transfer t = new Transfer(tx, ownerAddress, receiver, value);
             tx.addTransfer(t);
-
             transferCount++;
         }
 
         return tx;
     }
+
 
 
 
@@ -252,7 +259,7 @@ public class BitcoinClient implements ChainClient {
         visited.add(address);
 
         Wallet wallet = walletRepository.findById(address)
-                .orElseGet(() -> walletRepository.save(new Wallet(address, 1, 0L)));
+                .orElseGet(() -> walletRepository.save(new Wallet(address, 1, BigDecimal.ZERO)));
 
         List<Transaction> transactions = limited ? getTransactions(address, limit) : getTransactions(address);
         if (transactions == null || transactions.isEmpty()) return;

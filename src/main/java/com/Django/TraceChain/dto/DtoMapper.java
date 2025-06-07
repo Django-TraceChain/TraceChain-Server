@@ -2,22 +2,30 @@ package com.Django.TraceChain.dto;
 
 import com.Django.TraceChain.model.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.stream.Collectors;
 
 public class DtoMapper {
+
     public static WalletDto mapWallet(Wallet wallet) {
         List<String> patterns = PatternUtils.extractPatterns(wallet);
         List<TransactionDto> txDtos = wallet.getTransactions().stream()
                 .map(DtoMapper::mapTransaction)
                 .collect(Collectors.toList());
-        return new WalletDto(wallet.getAddress(), wallet.getBalance(), txDtos, patterns);
+
+        // balance가 BigDecimal이므로 그대로 전달
+        BigDecimal balance = wallet.getBalance();
+        return new WalletDto(wallet.getAddress(), balance, txDtos, patterns);
     }
 
     public static TransactionDto mapTransaction(Transaction tx) {
         List<TransferDto> tDtos = tx.getTransfers().stream()
                 .map(t -> new TransferDto(t.getSender(), t.getReceiver(), t.getAmount()))
                 .collect(Collectors.toList());
-        return new TransactionDto(tx.getTxID(), tx.getAmount(), tx.getTimestamp(), tDtos);
+
+        // long amount (satoshi)를 BTC 단위로 변환하여 전달
+        BigDecimal amountInBTC = tx.getAmount().divide(BigDecimal.valueOf(1e8));
+        return new TransactionDto(tx.getTxID(), amountInBTC, tx.getTimestamp(), tDtos);
     }
 }

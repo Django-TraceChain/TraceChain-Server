@@ -45,7 +45,7 @@ public class EthereumClient implements ChainClient {
 
     private Wallet safeFindOrCreateWallet(String address) {
         try {
-            return walletRepository.findById(address).orElseGet(() -> walletRepository.save(new Wallet(address, 2, 0L)));
+            return walletRepository.findById(address).orElseGet(() -> walletRepository.save(new Wallet(address, 2, BigDecimal.ZERO)));
         } catch (Exception e) {
             e.printStackTrace();
             return null;
@@ -55,7 +55,6 @@ public class EthereumClient implements ChainClient {
     @Override
     @Transactional
     public Wallet findAddress(String address) {
-        // DB에 이미 존재하는 지갑 확인
         Optional<Wallet> optionalWallet = walletRepository.findById(address);
         if (optionalWallet.isPresent()) {
             Wallet wallet = optionalWallet.get();
@@ -70,7 +69,7 @@ public class EthereumClient implements ChainClient {
 
             JsonNode root = new ObjectMapper().readTree(response.getBody());
             String result = root.path("result").asText();
-            long balance = new BigDecimal(result).divide(BigDecimal.TEN.pow(18)).longValue();
+            BigDecimal balance = new BigDecimal(result).divide(BigDecimal.TEN.pow(18));
 
             Wallet wallet = safeFindOrCreateWallet(address);
             if (wallet == null) {
@@ -79,7 +78,7 @@ public class EthereumClient implements ChainClient {
             }
 
             wallet.setBalance(balance);
-            wallet.setNewlyFetched(true);  // 새로 생성된 지갑임을 표시
+            wallet.setNewlyFetched(true);
             walletRepository.save(wallet);
             return wallet;
 
@@ -89,6 +88,14 @@ public class EthereumClient implements ChainClient {
         }
     }
 
+    private BigDecimal convertToEth(String valueStr) {
+        try {
+            BigDecimal value = new BigDecimal(valueStr);
+            return value.divide(BigDecimal.TEN.pow(18));
+        } catch (Exception e) {
+            return BigDecimal.ZERO;
+        }
+    }
 
     @Override
     @Transactional
@@ -110,35 +117,32 @@ public class EthereumClient implements ChainClient {
 
             if (!result.isArray()) return new ArrayList<>();
 
-            // 지갑 로딩 또는 생성
-            Wallet wallet = walletRepository.findById(address)
-                    .orElseGet(() -> walletRepository.save(new Wallet(address, 2, 0L)));
+            Wallet wallet = safeFindOrCreateWallet(address);
 
             for (JsonNode txNode : result) {
                 String txHash = txNode.path("hash").asText();
                 if (txMap.containsKey(txHash)) continue;
 
-                long value = new BigDecimal(txNode.path("value").asText()).longValue();
+                BigDecimal value = convertToEth(txNode.path("value").asText());
                 long timestamp = txNode.path("timeStamp").asLong();
                 LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), ZoneOffset.UTC);
 
                 Transaction tx = new Transaction(txHash, value, time);
-                Transfer t = new Transfer(tx, txNode.path("from").asText(), txNode.path("to").asText(), value);
+                Transfer t = new Transfer(tx, txNode.path("from").asText(), txNode.path("to").asText(), value.longValue());
                 tx.addTransfer(t);
 
-                // 관계 설정
                 tx.getWallets().add(wallet);
                 wallet.addTransaction(tx);
 
                 txMap.put(txHash, tx);
             }
 
-            // 저장 (Cascade 설정이 되어 있으면 트랜잭션만 저장해도 됨)
             transactionRepository.saveAll(txMap.values());
-            walletRepository.save(wallet); // 이미 저장된 경우 중복 저장 harmless
+            walletRepository.save(wallet);
 
         } catch (Exception e) {
             System.out.println("Ethereum getTransactions error: " + e.getMessage());
+            throw new RuntimeException("Ethereum getTransactions failed", e);
         }
 
         return new ArrayList<>(txMap.values());
@@ -162,13 +166,14 @@ public class EthereumClient implements ChainClient {
                 String txHash = txNode.path("hash").asText();
                 if (txMap.containsKey(txHash)) continue;
 
-                long value = new BigDecimal(txNode.path("value").asText()).longValue();
+                BigDecimal value = convertToEth(txNode.path("value").asText());
                 long timestamp = txNode.path("timeStamp").asLong();
                 LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), ZoneOffset.UTC);
 
                 Transaction tx = new Transaction(txHash, value, time);
-                Transfer t = new Transfer(tx, txNode.path("from").asText(), txNode.path("to").asText(), value);
+                Transfer t = new Transfer(tx, txNode.path("from").asText(), txNode.path("to").asText(), value.longValue());
                 tx.addTransfer(t);
+
                 tx.getWallets().add(wallet);
                 wallet.addTransaction(tx);
 
@@ -179,9 +184,11 @@ public class EthereumClient implements ChainClient {
             walletRepository.save(wallet);
         } catch (Exception e) {
             System.out.println("Ethereum getTransactions error: " + e.getMessage());
+            throw new RuntimeException("Ethereum getTransactions failed", e);
         }
         return new ArrayList<>(txMap.values());
     }
+
 
     @Override
     @Transactional
@@ -325,18 +332,18 @@ public class EthereumClient implements ChainClient {
                 String txHash = txNode.path("hash").asText();
                 if (txMap.containsKey(txHash)) continue;
 
-                // 💡 value 변환 오류 방지
+                // 💡 BigDecimal로 value 변환
+                BigDecimal value;
                 String valueStr = txNode.path("value").asText();
-                long value;
                 try {
                     if (valueStr.startsWith("0x")) {
-                        value = new BigInteger(valueStr.substring(2), 16).longValue();
+                        value = new BigDecimal(new BigInteger(valueStr.substring(2), 16));
                     } else {
-                        value = new BigDecimal(valueStr).longValue();
+                        value = new BigDecimal(valueStr);
                     }
                 } catch (Exception ex) {
                     System.out.println("value 변환 오류: " + valueStr);
-                    value = 0L;
+                    value = BigDecimal.ZERO;
                 }
 
                 long timestamp = txNode.path("timeStamp").asLong();
@@ -348,12 +355,15 @@ public class EthereumClient implements ChainClient {
                     tx = new Transaction(txHash, value, time);
                     String from = txNode.path("from").asText();
                     String to = txNode.path("to").asText();
-                    Transfer t = new Transfer(tx, from, to, value);
+
+                    // ✅ Transfer에는 long 단위 값 사용
+                    Transfer t = new Transfer(tx, from, to, value.longValue());
                     tx.addTransfer(t);
                     tx.getWallets().add(wallet);
                     wallet.addTransaction(tx);
                     transactionRepository.save(tx);
                 }
+
                 txMap.put(txHash, tx);
             }
 
@@ -370,17 +380,51 @@ public class EthereumClient implements ChainClient {
     public void traceTransactionsByTimeRange(String address, int depth, int maxDepth,
                                              long start, long end, int limit, Set<String> visited) {
         if (depth > maxDepth || visited.contains(address)) return;
-
         visited.add(address);
+
         List<Transaction> txList = getTransactionsByTimeRange(address, start, end, limit);
 
-        for (Transaction tx : txList) {
-            for (Transfer tr : tx.getTransfers()) {
-                String next = tr.getSender();
-                if (!visited.contains(next)) {
-                    traceTransactionsByTimeRange(next, depth + 1, maxDepth, start, end, limit, visited);
-                }
+        // 시간 필터 (추가 보정용, 혹시 모를 API 오차 대비)
+        List<Transaction> filtered = txList.stream()
+                .filter(tx -> {
+                    long ts = tx.getTimestamp().toEpochSecond(ZoneOffset.UTC);
+                    return ts >= start && ts <= end;
+                })
+                .collect(Collectors.toList());
+
+        if (filtered.isEmpty()) return;
+
+        // 트랜잭션 저장 (중복 저장 방지 포함)
+        Wallet wallet = safeFindOrCreateWallet(address);
+        Set<String> existingTxIDs = wallet.getTransactions().stream()
+                .map(Transaction::getTxID).collect(Collectors.toSet());
+
+        for (Transaction tx : filtered) {
+            if (!existingTxIDs.contains(tx.getTxID())) {
+                wallet.addTransaction(tx);
             }
+            if (!tx.getWallets().contains(wallet)) {
+                tx.getWallets().add(wallet);
+            }
+            tx.getTransfers().forEach(t -> t.setTransaction(tx));
+        }
+
+        transactionRepository.saveAll(filtered);
+        walletRepository.save(wallet);
+
+        // 재귀 대상 주소 수집
+        Set<String> nextAddresses = new HashSet<>();
+        for (Transaction tx : filtered) {
+            for (Transfer tr : tx.getTransfers()) {
+                if (tr.getSender() != null && !visited.contains(tr.getSender()))
+                    nextAddresses.add(tr.getSender());
+                if (tr.getReceiver() != null && !visited.contains(tr.getReceiver()))
+                    nextAddresses.add(tr.getReceiver());
+            }
+        }
+
+        for (String next : nextAddresses) {
+            traceTransactionsByTimeRange(next, depth + 1, maxDepth, start, end, limit, visited);
         }
     }
 
