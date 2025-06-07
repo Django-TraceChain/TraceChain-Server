@@ -332,14 +332,15 @@ public class EthereumClient implements ChainClient {
                 String txHash = txNode.path("hash").asText();
                 if (txMap.containsKey(txHash)) continue;
 
-                // 💡 BigDecimal로 value 변환
+                // 💡 BigDecimal로 value 변환 (ETH 단위로 변환)
                 BigDecimal value;
                 String valueStr = txNode.path("value").asText();
                 try {
                     if (valueStr.startsWith("0x")) {
-                        value = new BigDecimal(new BigInteger(valueStr.substring(2), 16));
+                        value = new BigDecimal(new BigInteger(valueStr.substring(2), 16))
+                                .divide(BigDecimal.TEN.pow(18));  // ✅ ETH 단위로 변환
                     } else {
-                        value = new BigDecimal(valueStr);
+                        value = new BigDecimal(valueStr).divide(BigDecimal.TEN.pow(18));  // ✅ ETH 변환
                     }
                 } catch (Exception ex) {
                     System.out.println("value 변환 오류: " + valueStr);
