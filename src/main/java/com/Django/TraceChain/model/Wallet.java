@@ -151,4 +151,13 @@ public class Wallet {
             tx.getWallets().remove(this);
         }
     }
+    
+    public void resetPatterns() {
+        this.fixedAmountPattern = null;
+        this.multiIOPattern = null;
+        this.loopingPattern = null;
+        this.relayerPattern = null;
+        this.peelChainPattern = null;
+        this.patternCnt = 0;
+    }
 }
