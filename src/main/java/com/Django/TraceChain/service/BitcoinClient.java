@@ -3,6 +3,7 @@ package com.Django.TraceChain.service;
 import com.Django.TraceChain.model.Transaction;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.ZoneId;
 import com.Django.TraceChain.model.Transfer;
 import com.Django.TraceChain.model.Wallet;
@@ -119,7 +120,8 @@ public class BitcoinClient implements ChainClient {
         // 총 전송 금액을 BTC 단위로 계산
         for (JsonNode vout : txNode.path("vout")) {
             long valueSatoshi = vout.path("value").asLong(0);  // Satoshi
-            BigDecimal valueBTC = BigDecimal.valueOf(valueSatoshi).divide(BigDecimal.valueOf(1e8));  // Satoshi → BTC
+            BigDecimal valueBTC = BigDecimal.valueOf(valueSatoshi)
+            	    .divide(BigDecimal.valueOf(100_000_000), 8, RoundingMode.DOWN);  // Satoshi → BTC
             total = total.add(valueBTC);
         }
 

@@ -24,8 +24,10 @@ public class DtoMapper {
                 .map(t -> new TransferDto(t.getSender(), t.getReceiver(), t.getAmount()))
                 .collect(Collectors.toList());
 
-        // long amount (satoshi)를 BTC 단위로 변환하여 전달
-        BigDecimal amountInBTC = tx.getAmount().divide(BigDecimal.valueOf(1e8));
+        // tx.getAmount()가 이미 BTC 단위이면 변환하지 말 것
+        BigDecimal amountInBTC = tx.getAmount(); // divide 제거
+
         return new TransactionDto(tx.getTxID(), amountInBTC, tx.getTimestamp(), tDtos);
     }
+
 }
