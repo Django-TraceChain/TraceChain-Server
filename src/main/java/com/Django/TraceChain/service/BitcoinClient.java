@@ -117,52 +117,56 @@ public class BitcoinClient implements ChainClient {
         BigDecimal total = BigDecimal.ZERO;
         int transferLimit = 30;
 
-        // 총 전송 금액을 BTC 단위로 계산
         for (JsonNode vout : txNode.path("vout")) {
-            long valueSatoshi = vout.path("value").asLong(0);  // Satoshi
+            long valueSatoshi = vout.path("value").asLong(0);
             BigDecimal valueBTC = BigDecimal.valueOf(valueSatoshi)
-            	    .divide(BigDecimal.valueOf(100_000_000), 8, RoundingMode.DOWN);  // Satoshi → BTC
+                    .divide(BigDecimal.valueOf(100_000_000), 8, RoundingMode.DOWN);
             total = total.add(valueBTC);
         }
 
-        Transaction tx = new Transaction(txid, total, txTime);  // BTC 단위로 저장
+        Transaction tx = new Transaction(txid, total, txTime);
 
         int transferCount = 0;
 
-        // vin 처리 (입력)
         for (JsonNode vin : txNode.path("vin")) {
             if (transferCount >= transferLimit) break;
 
             String sender = vin.path("prevout").path("scriptpubkey_address").asText(null);
-            long value = vin.path("prevout").path("value").asLong(0);  // Satoshi 단위
+            long value = vin.path("prevout").path("value").asLong(0);
 
             if (sender == null || sender.isEmpty()) {
                 sender = ownerAddress;
             }
 
-            Transfer t = new Transfer(tx, sender, ownerAddress, value);  // 여전히 Satoshi 단위
+            BigDecimal valueBTC = BigDecimal.valueOf(value)
+                    .divide(BigDecimal.valueOf(100_000_000), 8, RoundingMode.DOWN);
+
+            Transfer t = new Transfer(tx, sender, ownerAddress, valueBTC);
             tx.addTransfer(t);
             transferCount++;
         }
 
-        // vout 처리 (출력)
         for (JsonNode vout : txNode.path("vout")) {
             if (transferCount >= transferLimit) break;
 
             String receiver = vout.path("scriptpubkey_address").asText(null);
-            long value = vout.path("value").asLong(0);  // Satoshi 단위
+            long value = vout.path("value").asLong(0);
 
             if (receiver == null || receiver.isEmpty()) {
                 receiver = ownerAddress;
             }
 
-            Transfer t = new Transfer(tx, ownerAddress, receiver, value);
+            BigDecimal valueBTC = BigDecimal.valueOf(value)
+                    .divide(BigDecimal.valueOf(100_000_000), 8, RoundingMode.DOWN);
+
+            Transfer t = new Transfer(tx, ownerAddress, receiver, valueBTC);
             tx.addTransfer(t);
             transferCount++;
         }
 
         return tx;
     }
+
 
 
 
@@ -439,8 +443,9 @@ public class BitcoinClient implements ChainClient {
             for (Transaction tx : wallet.getTransactions()) {
                 System.out.println("  └─ [트랜잭션] TXID: " + tx.getTxID());
                 for (Transfer transfer : tx.getTransfers()) {
-                    System.out.printf("      └─ [전송] FROM: %s TO: %s AMOUNT: %d sats\n",
-                            transfer.getSender(), transfer.getReceiver(), transfer.getAmount());
+                	System.out.printf("      └─ [전송] FROM: %s TO: %s AMOUNT: %s BTC\n",
+                	        transfer.getSender(), transfer.getReceiver(), transfer.getAmount().toPlainString());
+
 
                     // 연결된 다른 지갑들도 큐에 추가
                     if (!visitedWallets.contains(transfer.getSender())) {

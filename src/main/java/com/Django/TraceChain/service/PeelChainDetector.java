@@ -1,5 +1,6 @@
 package com.Django.TraceChain.service;
 
+import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,30 +49,30 @@ public class PeelChainDetector implements MixingDetector {
 
                 Set<String> inputAddrs = new HashSet<>();
                 Set<String> outputAddrs = new HashSet<>();
-                double totalInput = 0.0;
-                double totalOutput = 0.0;
-                double smallAmount = 0.0;
+                BigDecimal totalInput = BigDecimal.ZERO;
+                BigDecimal totalOutput = BigDecimal.ZERO;
+                BigDecimal smallAmount = BigDecimal.ZERO;
 
                 for (Transfer t : transfers) {
                     if (t.getSender() != null && t.getSender().equals(walletAddress)) {
                         inputAddrs.add(t.getSender());
-                        totalInput += t.getAmount();
+                        totalInput = totalInput.add(t.getAmount());
                     }
                     if (t.getReceiver() != null) {
                         outputAddrs.add(t.getReceiver());
-                        totalOutput += t.getAmount();
+                        totalOutput = totalOutput.add(t.getAmount());
                     }
                 }
 
                 if (inputAddrs.size() == 1 && outputAddrs.size() == 2) {
                     for (Transfer t : transfers) {
                         if (t.getSender().equals(walletAddress) &&
-                            t.getAmount() <= totalInput * SMALL_AMOUNT_RATIO) {
+                            t.getAmount().compareTo(totalInput.multiply(BigDecimal.valueOf(SMALL_AMOUNT_RATIO))) <= 0) {
                             smallAmount = t.getAmount();
                         }
                     }
 
-                    if (smallAmount > 0) {
+                    if (smallAmount.compareTo(BigDecimal.ZERO) > 0) {
                         chainLength++;
                     } else {
                         chainLength = 0;

@@ -1,5 +1,6 @@
 package com.Django.TraceChain.service;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -35,7 +36,7 @@ public class FixedAmountDetector implements MixingDetector {
             boolean detected = false;
 
             for (int i = 0; i < transactions.size(); i++) {
-                Map<Double, Integer> amountCountMap = new HashMap<>();
+                Map<BigDecimal, Integer> amountCountMap = new HashMap<>();  // Double -> BigDecimal 변경
                 LocalDateTime startTime = transactions.get(i).getTimestamp();
 
                 for (int j = i; j < transactions.size(); j++) {
@@ -46,7 +47,7 @@ public class FixedAmountDetector implements MixingDetector {
 
                     for (Transfer transfer : currentTx.getTransfers()) {
                         if (walletAddress.equals(transfer.getSender()) || walletAddress.equals(transfer.getReceiver())) {
-                            double amount = transfer.getAmount();
+                            BigDecimal amount = transfer.getAmount();  // double -> BigDecimal
                             amountCountMap.put(amount, amountCountMap.getOrDefault(amount, 0) + 1);
                         }
                     }
@@ -72,7 +73,6 @@ public class FixedAmountDetector implements MixingDetector {
                 wallet.setFixedAmountPattern(false);
                 System.out.println("[FixedAmount] 패턴 없음: " + walletAddress);
             }
-
 
             walletRepository.save(wallet);
         }

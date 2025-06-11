@@ -1,5 +1,7 @@
 package com.Django.TraceChain.model;
 
+import java.math.BigDecimal;
+
 import jakarta.persistence.*;
 
 @Entity
@@ -8,7 +10,7 @@ public class Transfer {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;                // 자동 생성 PK
+    private Long id; // 자동 생성 PK
 
     // 이 관계가 속한 트랜잭션 (N:1)
     @ManyToOne(fetch = FetchType.LAZY)
@@ -16,13 +18,13 @@ public class Transfer {
     private Transaction transaction;
 
     @Column(nullable = false)
-    private String sender;          // 보낸 지갑 주소 (NOT NULL)
+    private String sender; // 보낸 지갑 주소 (NOT NULL)
 
     @Column(nullable = false)
-    private String receiver;        // 받은 지갑 주소 (NOT NULL)
+    private String receiver; // 받은 지갑 주소 (NOT NULL)
 
-    @Column(nullable = false)
-    private long amount;            // 해당 입출력의 금액 (NOT NULL)
+    @Column(precision = 36, scale = 18, nullable = false)
+    private BigDecimal amount = BigDecimal.ZERO; // 해당 입출력의 금액 (NOT NULL)
 
     // 기본 생성자
     public Transfer() {}
@@ -31,7 +33,7 @@ public class Transfer {
     public Transfer(Transaction transaction,
                     String sender,
                     String receiver,
-                    long amount) {
+                    BigDecimal amount) {
         this.transaction = transaction;
         this.sender = sender;
         this.receiver = receiver;
@@ -51,6 +53,6 @@ public class Transfer {
     public String getReceiver() { return receiver; }
     public void setReceiver(String receiver) { this.receiver = receiver; }
 
-    public long getAmount() { return amount; }
-    public void setAmount(long amount) { this.amount = amount; }
+    public BigDecimal getAmount() { return amount; }
+    public void setAmount(BigDecimal amount) { this.amount = amount; }
 }

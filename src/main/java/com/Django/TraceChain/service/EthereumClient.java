@@ -15,6 +15,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -91,11 +92,12 @@ public class EthereumClient implements ChainClient {
     private BigDecimal convertToEth(String valueStr) {
         try {
             BigDecimal value = new BigDecimal(valueStr);
-            return value.divide(BigDecimal.TEN.pow(18));
+            return value.divide(BigDecimal.TEN.pow(18), 18, RoundingMode.DOWN);
         } catch (Exception e) {
             return BigDecimal.ZERO;
         }
     }
+
 
     @Override
     @Transactional
@@ -128,7 +130,10 @@ public class EthereumClient implements ChainClient {
                 LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), ZoneOffset.UTC);
 
                 Transaction tx = new Transaction(txHash, value, time);
-                Transfer t = new Transfer(tx, txNode.path("from").asText(), txNode.path("to").asText(), value.longValue());
+                Transfer t = new Transfer(tx,
+                                          txNode.path("from").asText(),
+                                          txNode.path("to").asText(),
+                                          value); // BigDecimal 전달
                 tx.addTransfer(t);
 
                 tx.getWallets().add(wallet);
@@ -148,12 +153,23 @@ public class EthereumClient implements ChainClient {
         return new ArrayList<>(txMap.values());
     }
 
+
     @Override
     @Transactional
     public List<Transaction> getTransactions(String address, int limit) {
         Map<String, Transaction> txMap = new LinkedHashMap<>();
         try {
-            String url = apiUrl + "?module=account&action=txlist&address=" + address + "&startblock=0&endblock=99999999&page=1&offset=" + limit + "&sort=desc&apikey=" + apiKey;
+            String url = apiUrl
+                    + "?module=account"
+                    + "&action=txlist"
+                    + "&address=" + address
+                    + "&startblock=0"
+                    + "&endblock=99999999"
+                    + "&page=1"
+                    + "&offset=" + limit
+                    + "&sort=desc"
+                    + "&apikey=" + apiKey;
+
             RestTemplate restTemplate = new RestTemplate();
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
             JsonNode result = new ObjectMapper().readTree(response.getBody()).path("result");
@@ -171,7 +187,12 @@ public class EthereumClient implements ChainClient {
                 LocalDateTime time = LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), ZoneOffset.UTC);
 
                 Transaction tx = new Transaction(txHash, value, time);
-                Transfer t = new Transfer(tx, txNode.path("from").asText(), txNode.path("to").asText(), value.longValue());
+                Transfer t = new Transfer(
+                    tx,
+                    txNode.path("from").asText(),
+                    txNode.path("to").asText(),
+                    value // <-- longValue() 제거, BigDecimal 그대로
+                );
                 tx.addTransfer(t);
 
                 tx.getWallets().add(wallet);
@@ -186,8 +207,10 @@ public class EthereumClient implements ChainClient {
             System.out.println("Ethereum getTransactions error: " + e.getMessage());
             throw new RuntimeException("Ethereum getTransactions failed", e);
         }
+
         return new ArrayList<>(txMap.values());
     }
+
 
 
     @Override
@@ -300,8 +323,7 @@ public class EthereumClient implements ChainClient {
             return 0L;
         }
     }
-
-
+    @Override
     @Transactional
     public List<Transaction> getTransactionsByTimeRange(String address, long startTimestamp, long endTimestamp, int limit) {
         Map<String, Transaction> txMap = new LinkedHashMap<>();
@@ -332,15 +354,15 @@ public class EthereumClient implements ChainClient {
                 String txHash = txNode.path("hash").asText();
                 if (txMap.containsKey(txHash)) continue;
 
-                // 💡 BigDecimal로 value 변환 (ETH 단위로 변환)
+                // ✅ ETH 단위로 변환
                 BigDecimal value;
                 String valueStr = txNode.path("value").asText();
                 try {
                     if (valueStr.startsWith("0x")) {
                         value = new BigDecimal(new BigInteger(valueStr.substring(2), 16))
-                                .divide(BigDecimal.TEN.pow(18));  // ✅ ETH 단위로 변환
+                                .divide(BigDecimal.TEN.pow(18));
                     } else {
-                        value = new BigDecimal(valueStr).divide(BigDecimal.TEN.pow(18));  // ✅ ETH 변환
+                        value = new BigDecimal(valueStr).divide(BigDecimal.TEN.pow(18));
                     }
                 } catch (Exception ex) {
                     System.out.println("value 변환 오류: " + valueStr);
@@ -357,11 +379,13 @@ public class EthereumClient implements ChainClient {
                     String from = txNode.path("from").asText();
                     String to = txNode.path("to").asText();
 
-                    // ✅ Transfer에는 long 단위 값 사용
-                    Transfer t = new Transfer(tx, from, to, value.longValue());
+                    // ✅ BigDecimal 그대로 사용
+                    Transfer t = new Transfer(tx, from, to, value);
                     tx.addTransfer(t);
+
                     tx.getWallets().add(wallet);
                     wallet.addTransaction(tx);
+
                     transactionRepository.save(tx);
                 }
 
