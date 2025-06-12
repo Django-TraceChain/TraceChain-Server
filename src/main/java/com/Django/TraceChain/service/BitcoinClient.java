@@ -18,6 +18,7 @@ import jakarta.persistence.PersistenceContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,18 +57,25 @@ public class BitcoinClient implements ChainClient {
     public boolean supports(String chainType) {
         return "bitcoin".equalsIgnoreCase(chainType);
     }
+    
+    private RestTemplate createRestTemplateWithTimeout() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(5000);
+        return new RestTemplate(factory);
+    }
+
 
     @Override
     @Transactional
     public Wallet findAddress(String address) {
         Optional<Wallet> optionalWallet = walletRepository.findById(address);
         if (optionalWallet.isPresent()) {
-            System.out.println("존재하는 지갑: " + address);
             return optionalWallet.get();
         }
 
         String token = accessToken.getAccessToken();
-        RestTemplate restTemplate = new RestTemplate();
+        RestTemplate restTemplate = createRestTemplateWithTimeout();
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         HttpEntity<Void> entity = new HttpEntity<>(headers);
@@ -80,21 +88,18 @@ public class BitcoinClient implements ChainClient {
             String addr = root.path("address").asText();
             BigDecimal funded = new BigDecimal(root.path("chain_stats").path("funded_txo_sum").asLong());
             BigDecimal spent = new BigDecimal(root.path("chain_stats").path("spent_txo_sum").asLong());
-            BigDecimal balance = funded.subtract(spent).divide(BigDecimal.valueOf(1e8)); // BTC 단위로 변환
+            BigDecimal balance = funded.subtract(spent).divide(BigDecimal.valueOf(1e8));
 
             Wallet wallet = new Wallet(addr, 1, balance);
             wallet.setNewlyFetched(true);
             return saveWallet(wallet);
 
         } catch (Exception e) {
-            System.out.println("Bitcoin findAddress error: " + e.getMessage());
             Wallet fallback = new Wallet(address, 1, BigDecimal.ZERO);
             fallback.setNewlyFetched(true);
             return fallback;
         }
     }
-
-
 
     @Transactional(propagation = Propagation.REQUIRED)
     public Wallet saveWallet(Wallet wallet) {
@@ -115,8 +120,6 @@ public class BitcoinClient implements ChainClient {
                 Instant.ofEpochSecond(txNode.path("status").path("block_time").asLong(0)), ZoneOffset.UTC);
 
         BigDecimal total = BigDecimal.ZERO;
-        int transferLimit = 30;
-
         for (JsonNode vout : txNode.path("vout")) {
             long valueSatoshi = vout.path("value").asLong(0);
             BigDecimal valueBTC = BigDecimal.valueOf(valueSatoshi)
@@ -125,52 +128,31 @@ public class BitcoinClient implements ChainClient {
         }
 
         Transaction tx = new Transaction(txid, total, txTime);
-
         int transferCount = 0;
+        int transferLimit = 30;
 
         for (JsonNode vin : txNode.path("vin")) {
             if (transferCount >= transferLimit) break;
-
             String sender = vin.path("prevout").path("scriptpubkey_address").asText(null);
             long value = vin.path("prevout").path("value").asLong(0);
-
-            if (sender == null || sender.isEmpty()) {
-                sender = ownerAddress;
-            }
-
-            BigDecimal valueBTC = BigDecimal.valueOf(value)
-                    .divide(BigDecimal.valueOf(100_000_000), 8, RoundingMode.DOWN);
-
-            Transfer t = new Transfer(tx, sender, ownerAddress, valueBTC);
-            tx.addTransfer(t);
+            if (sender == null || sender.isEmpty()) sender = ownerAddress;
+            BigDecimal valueBTC = BigDecimal.valueOf(value).divide(BigDecimal.valueOf(100_000_000), 8, RoundingMode.DOWN);
+            tx.addTransfer(new Transfer(tx, sender, ownerAddress, valueBTC));
             transferCount++;
         }
 
         for (JsonNode vout : txNode.path("vout")) {
             if (transferCount >= transferLimit) break;
-
             String receiver = vout.path("scriptpubkey_address").asText(null);
             long value = vout.path("value").asLong(0);
-
-            if (receiver == null || receiver.isEmpty()) {
-                receiver = ownerAddress;
-            }
-
-            BigDecimal valueBTC = BigDecimal.valueOf(value)
-                    .divide(BigDecimal.valueOf(100_000_000), 8, RoundingMode.DOWN);
-
-            Transfer t = new Transfer(tx, ownerAddress, receiver, valueBTC);
-            tx.addTransfer(t);
+            if (receiver == null || receiver.isEmpty()) receiver = ownerAddress;
+            BigDecimal valueBTC = BigDecimal.valueOf(value).divide(BigDecimal.valueOf(100_000_000), 8, RoundingMode.DOWN);
+            tx.addTransfer(new Transfer(tx, ownerAddress, receiver, valueBTC));
             transferCount++;
         }
 
         return tx;
     }
-
-
-
-
-
 
     @Transactional
     @Override
@@ -311,24 +293,21 @@ public class BitcoinClient implements ChainClient {
         System.out.printf("[TRACE] Exit depth=%d, address=%s%n", depth, address);
     }
 
-
-
     @Transactional
     public List<Transaction> getTransactionsByTimeRange(String address, long start, long end, int limit) {
         String token = accessToken.getAccessToken();
-        if (token == null) {
+        if (token == null || token.isEmpty()) {
             System.out.println("[getTransactionsByTimeRange] No access token available.");
             return Collections.emptyList();
         }
 
-        RestTemplate restTemplate = new RestTemplate();
+        RestTemplate restTemplate = createRestTemplateWithTimeout();
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
         List<Transaction> transactions = new ArrayList<>();
         Set<String> seenTxids = new HashSet<>();
-
         String lastSeenTxid = null;
         boolean more = true;
 
@@ -339,11 +318,22 @@ public class BitcoinClient implements ChainClient {
                         : apiUrl + "/address/" + address + "/txs";
 
                 ResponseEntity<String> response = restTemplate.exchange(requestUrl, HttpMethod.GET, entity, String.class);
-                JsonNode rootArray = new ObjectMapper().readTree(response.getBody());
 
-                if (!rootArray.isArray() || rootArray.size() == 0) break;
+                if (!response.getStatusCode().is2xxSuccessful()) {
+                    System.out.println("[getTransactionsByTimeRange] API call failed with status: " + response.getStatusCode());
+                    break;
+                }
 
-                for (JsonNode txNode : rootArray) {
+                String body = response.getBody();
+                if (body == null || body.isEmpty()) {
+                    System.out.println("[getTransactionsByTimeRange] Empty response body.");
+                    break;
+                }
+
+                JsonNode root = new ObjectMapper().readTree(body);
+                if (!root.isArray() || root.size() == 0) break;
+
+                for (JsonNode txNode : root) {
                     if (transactions.size() >= limit) {
                         more = false;
                         break;
@@ -352,35 +342,31 @@ public class BitcoinClient implements ChainClient {
                     String txid = txNode.path("txid").asText();
                     if (seenTxids.contains(txid)) continue;
                     seenTxids.add(txid);
+                    lastSeenTxid = txid;
 
                     long blockTime = txNode.path("status").path("block_time").asLong(0);
-                    if (blockTime == 0) continue;
+                    if (blockTime == 0 || blockTime < start) continue;
+                    if (blockTime > end) continue;
 
-                    if (blockTime < start) {
-                        more = false; // 시간 범위 벗어남, 더 조회하지 않음
-                        break;
+                    Transaction tx = transactionRepository.findById(txid)
+                            .orElseGet(() -> parseTransaction(txNode, address));
+
+                    if (!transactionRepository.existsById(tx.getTxID())) {
+                        tx = saveTransaction(tx);
                     }
 
-                    if (blockTime <= end) {
-                        Optional<Transaction> existing = transactionRepository.findById(txid);
-                        Transaction tx = existing.orElseGet(() -> parseTransaction(txNode, address));
-                        if (existing.isEmpty()) tx = saveTransaction(tx);
-
-                        transactions.add(tx);
-                    }
-
-                    lastSeenTxid = txid;
+                    transactions.add(tx);
                 }
 
-                if (rootArray.size() < 25) more = false;
+                if (root.size() < 25) more = false;
             }
         } catch (Exception e) {
             System.err.println("[getTransactionsByTimeRange] error: " + e.getMessage());
-            throw new RuntimeException("Failed to fetch transactions by time range", e);
         }
 
         return transactions;
     }
+
 
     @Transactional
     public void traceTransactionsByTimeRange(String address, int depth, int maxDepth,
@@ -420,7 +406,6 @@ public class BitcoinClient implements ChainClient {
         }
     }
 
-    
     private void debugPrintWalletRelations(String rootAddress) {
         System.out.println("\n========== [DEBUG] 지갑-트랜잭션-트랜스퍼 관계 출력 ==========");
 
