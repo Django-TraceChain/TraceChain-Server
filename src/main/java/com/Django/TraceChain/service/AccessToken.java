@@ -29,11 +29,10 @@ public class AccessToken {
     public String getAccessToken() {
         if (cachedToken != null && Instant.now().isBefore(tokenExpiryTime)) {
             // 디버깅 출력
-            System.out.println("Using cached token");
+//            System.out.println("Using cached token");
             return cachedToken;
         }
 
-        System.out.println("Requesting new access token...");
 
         RestTemplate restTemplate = new RestTemplate();
 
