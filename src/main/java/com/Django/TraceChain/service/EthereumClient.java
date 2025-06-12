@@ -130,7 +130,7 @@ public class EthereumClient implements ChainClient {
     @Override
     @Transactional
     public List<Transaction> getTransactions(String address) {
-        return getTransactions(address, 0); // 0 or any special value means no limit, fetch all
+        return getTransactions(address, 500); // 0 or any special value means no limit, fetch all
     }
 
     @Transactional
