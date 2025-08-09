@@ -11,147 +11,166 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
-/*
-** 1. Relayer 후보선정: => 한 지갑이 여러 지갑으로 송금하면서도, 입금 내역이 없음, 트랜잭션 간의 시간 간격이 5분 이내
-* 2. 수신자 주소들은 입금 이력이 없어야함: => 수신자는 다른 지갑에서 자금을 받은 적이 없고, 오직 해당 relayer에게서만 받음
-* 3. 최소 3건이상 유사 트랜잭션일 경우 relayer 패턴으로 판단
-*
-* relay는 자신의 돈을 보내는 것이 아니라, 다른 사용자의 요청을 받고 그 대신 송금을 수행하는 역할을 한다.
-* 이 때 입급은 Relayer가 직접 받는게 아니라, 스마트컨트랙트가 입금을 받고 출금 요청만 relayer가 수행한다.
-* 따라서 Relayer는 입금 없이 출금만 있는 지갑이라는 독특한 패턴을 갖게됨.
-*
-* "이 지갑이 중간 전달자(relayer)로서 자금을 다른 지갑으로 보낸 적이 있는가?" 를 탐지하는는 믹싱패턴
-* 📚 관련 논문 및 참고 문헌
-다음은 실제 연구 및 분석에서 위 기준들이 어떻게 활용되는지를 보여주는 논문과 자료들이야:
-
-[1] Detecting Ethereum Mixers (AUA, 2024)
-Tornado Cash 등 믹서 컨트랙트의 함수 시그니처(deposit(bytes32))를 추적하여 사용 여부 탐지
-
-Relayer를 통한 출금 구조 강조
-
-📄 논문 보기
-
-[2] Address Linkability in Tornado Cash (Springer, 2021)
-주소 간의 linkability (연결 가능성)을 판단하는 휴리스틱 분석 제시
-
-타이밍, 거래 패턴 기반으로 relayer 패턴 탐지
-
-📄 논문 보기
-
-[3] Correlating Accounts on Ethereum Mixing Services (arXiv, 2024)
-다양한 계정을 연결짓기 위한 정량적 분석 프레임워크 제시
-
-relayer 추론 및 지갑 연결성 분석 포함
-
-
+/**
+ * 고정밀 Relayer 탐지기
+ * - 시간창(5분) 내 동일 발신자(sender)가 다수 수신자에게 연속 출금
+ * - 금액 '정액'(denom) 일관성(±2%)
+ * - 출금 간 인터벌의 변동계수(CV) 낮음 → 자동화 의심
+ * - 수신자 과거 이력 없음(무-history) → 새 엔티티로 지급
+ *
+ * 점수:
+ *   s_rel = min(1, 0.4*1[Nr>=3] + 0.3*1[denomConsistent] + 0.2*(1 - cvInterval) + 0.1*1[allReceiversNoHistory])
+ *   (임계 0.70 권장)
  */
-
 @Service
 public class RelayerDetector implements MixingDetector {
 
     @Autowired
     private WalletRepository walletRepository;
 
-    private static final int TIME_THRESHOLD_SEC = 300; // 5분
-    private static final int MIN_RELAY_COUNT = 3;
+    private static final int WINDOW_SEC = 300;     // 5분
+    private static final int MIN_COUNT = 3;        // 최소 군집 크기
+    private static final double EPS_DENOM = 0.02;  // ±2% 정액 허용
+    private static final double THRESHOLD = 0.70;  // 최종 판정 임계
+
+    static final class T {
+        final String sender;
+        final String receiver;
+        final double amount;          // BigDecimal -> double로 계산 편의
+        final LocalDateTime ts;
+        final String txid;
+        T(String s, String r, double a, LocalDateTime t, String id) {
+            this.sender = s; this.receiver = r; this.amount = a; this.ts = t; this.txid = id;
+        }
+    }
 
     @Transactional
     @Override
     public void analyze(List<Wallet> wallets) {
-        Map<String, List<Transfer>> senderToTransfers = new HashMap<>();
+        if (wallets == null || wallets.isEmpty()) return;
 
-        System.out.println("[Relayer] 분석 시작");
-
-        // 1. 모든 Transfer 수집
-        for (Wallet wallet : wallets) {
-            for (Transaction tx : wallet.getTransactions()) {
-                for (Transfer t : tx.getTransfers()) {
-                    String sender = t.getSender();
-                    if (sender == null || sender.equals(wallet.getAddress())) continue;
-
-                    senderToTransfers.computeIfAbsent(sender, k -> new ArrayList<>()).add(t);
-                }
-            }
-        }
-
-        System.out.println("[Relayer] 후보 relayer 수: " + senderToTransfers.size());
-
-        // 모든 지갑에 탐지 초기값 false 설정
+        // 전체 트랜잭션에서 Transfer 평탄화 (지갑 로컬 DB 기준)
+        List<T> all = new ArrayList<>();
         for (Wallet w : wallets) {
-            w.setRelayerPattern(false);
+            List<Transaction> txs = w.getTransactions();
+            if (txs == null) continue;
+            for (Transaction tx : txs) {
+                LocalDateTime ts = tx.getTimestamp();
+                for (Transfer tr : tx.getTransfers()) {
+                    if (tr.getSender() == null || tr.getReceiver() == null) continue;
+                    all.add(new T(tr.getSender(), tr.getReceiver(),
+                            tr.getAmount() == null ? 0.0 : tr.getAmount().doubleValue(),
+                            ts, tx.getTxID()));
+                }
+            }
         }
+        if (all.isEmpty()) return;
 
-        // 2. 후보 Relayer를 검토
-        for (Map.Entry<String, List<Transfer>> entry : senderToTransfers.entrySet()) {
-            String potentialRelayer = entry.getKey();
-            List<Transfer> transfers = entry.getValue();
+        // sender별 시간 정렬
+        Map<String, List<T>> bySender = all.stream()
+                .collect(Collectors.groupingBy(t -> t.sender));
+        bySender.values().forEach(list -> list.sort(Comparator.comparing(t -> t.ts)));
 
-            System.out.println("[Relayer] 후보 주소 검사 중: " + potentialRelayer);
+        // 모든 지갑은 초기 false로
+        wallets.forEach(w -> w.setRelayerPattern(false));
 
-            // 수신자별 그룹핑
-            Map<String, List<Transfer>> receiverMap = new HashMap<>();
-            for (Transfer t : transfers) {
-                receiverMap.computeIfAbsent(t.getReceiver(), r -> new ArrayList<>()).add(t);
-            }
+        for (Map.Entry<String, List<T>> e : bySender.entrySet()) {
+            String candidate = e.getKey(); // 잠재적 relayer
+            List<T> txs = e.getValue();
+            if (txs.size() < MIN_COUNT) continue;
 
-            List<Transfer> recentTransfers = new ArrayList<>();
-            for (List<Transfer> tList : receiverMap.values()) {
-                recentTransfers.addAll(tList);
-            }
-
-            // 시간 기준 정렬
-            recentTransfers.sort(Comparator.comparing(t -> t.getTransaction().getTimestamp()));
-
-            // 3. 시간 간격 내 그룹핑 및 relayer 패턴 확인
-            List<Transfer> group = new ArrayList<>();
-            LocalDateTime baseTime = null;
-
-            for (Transfer t : recentTransfers) {
-                LocalDateTime tTime = t.getTransaction().getTimestamp();
-                if (baseTime == null || Duration.between(baseTime, tTime).getSeconds() <= TIME_THRESHOLD_SEC) {
-                    if (baseTime == null) baseTime = tTime;
-                    group.add(t);
-                } else {
-                    baseTime = tTime;
-                    group.clear();
-                    group.add(t);
+            // 슬라이딩 윈도우 군집
+            int left = 0;
+            while (left < txs.size()) {
+                int right = left;
+                LocalDateTime base = txs.get(left).ts;
+                List<T> group = new ArrayList<>();
+                while (right < txs.size() &&
+                        Duration.between(base, txs.get(right).ts).getSeconds() <= WINDOW_SEC) {
+                    group.add(txs.get(right));
+                    right++;
                 }
 
-                if (group.size() >= MIN_RELAY_COUNT) {
-                    System.out.println("[Relayer] 시간 조건 충족: " + potentialRelayer + ", 트랜잭션 수=" + group.size());
-
-                    // 수신자의 입금 이력 확인
-                    boolean allReceiversHaveNoIncoming = group.stream()
-                            .map(Transfer::getReceiver)
-                            .distinct()
-                            .allMatch(receiver -> wallets.stream()
-                                    .noneMatch(w -> w.getAddress().equals(receiver) &&
-                                            w.getTransactions().stream()
-                                                    .flatMap(tx -> tx.getTransfers().stream())
-                                                    .anyMatch(t2 -> receiver.equals(t2.getSender()))
-                                    ));
-
-                    if (allReceiversHaveNoIncoming) {
-                        System.out.println("[Relayer] 수신자 조건 충족: " + potentialRelayer);
-
-                        // 해당 relayer 주소로 등록된 모든 지갑에 패턴 표시
-                        for (Wallet w : wallets) {
-                            if (w.getAddress().equals(potentialRelayer)) {
-                                w.setRelayerPattern(true);
+                // 군집 평가
+                double score = scoreGroup(candidate, group, all, base);
+                if (score >= THRESHOLD) {
+                    // relayer 지갑 객체 찾아 표시
+                    for (Wallet w : wallets) {
+                        if (candidate.equals(w.getAddress())) {
+                            if (!Boolean.TRUE.equals(w.getRelayerPattern())) {
                                 w.setPatternCnt(w.getPatternCnt() + 1);
-                                walletRepository.save(w);
-                                System.out.println("[Relayer] 패턴 감지됨: " + potentialRelayer);
                             }
+                            w.setRelayerPattern(true);
+                            walletRepository.save(w);
                         }
-                        break;
-                    } else {
-                        System.out.println("[Relayer] 수신자 입금 이력 존재: " + potentialRelayer);
                     }
                 }
+
+                // 다음 윈도우
+                left = Math.max(left + 1, right == left ? left + 1 : right);
             }
         }
+    }
 
-        System.out.println("[Relayer] 분석 완료");
+    private double scoreGroup(String sender, List<T> group, List<T> all, LocalDateTime base) {
+        if (group == null || group.size() < MIN_COUNT) return 0.0;
+
+        // 1) 수량 Nr
+        int Nr = group.size();
+        double fCount = (Nr >= MIN_COUNT) ? 1.0 : 0.0;
+
+        // 2) 정액 일관성 (max/min ≤ 1+ε)
+        double max = group.stream().mapToDouble(t -> t.amount).max().orElse(0.0);
+        double min = group.stream().mapToDouble(t -> t.amount).min().orElse(0.0);
+        boolean denomConsistent = (min > 0.0) && (max / min <= (1.0 + EPS_DENOM));
+        double fDenom = denomConsistent ? 1.0 : 0.0;
+
+        // 3) 인터벌 CV (낮을수록 좋음 → 1 - CV)
+        double cvInt = cvOfIntervals(group.stream().map(t -> t.ts).sorted().toList());
+        double fInterval = clamp01(1.0 - cvInt); // CV 0이면 1점, CV 1이면 0점 (대략)
+
+        // 4) 수신자 무-히스토리: base 이전에 어떤 입출력 기록도 없는 fresh 주소인지
+        //    (이 구현은 "DB에 들어온 범위 내에서" 과거 기록이 없음을 뜻함. 실제 '무-deposit' 근사치)
+        Set<String> receivers = group.stream().map(t -> t.receiver).collect(Collectors.toSet());
+        boolean allFresh = receivers.stream().allMatch(r -> noHistoryBefore(r, base, all));
+        double fNoHist = allFresh ? 1.0 : 0.0;
+
+        // s_rel
+        double s = 0.4 * fCount + 0.3 * fDenom + 0.2 * fInterval + 0.1 * fNoHist;
+        return Math.min(1.0, s);
+    }
+
+    private boolean noHistoryBefore(String addr, LocalDateTime base, List<T> universe) {
+        for (T t : universe) {
+            if (t.ts.isBefore(base) && (addr.equals(t.sender) || addr.equals(t.receiver))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private double cvOfIntervals(List<LocalDateTime> times) {
+        if (times.size() <= 2) return 0.0; // 인터벌 1개 이하면 CV=0 취급
+        List<Long> deltas = new ArrayList<>();
+        for (int i = 1; i < times.size(); i++) {
+            deltas.add(Duration.between(times.get(i - 1), times.get(i)).getSeconds());
+        }
+        double mean = deltas.stream().mapToDouble(x -> x).average().orElse(0.0);
+        if (mean == 0.0) return 1.0;
+        double var = 0.0;
+        for (long d : deltas) {
+            double diff = d - mean;
+            var += diff * diff;
+        }
+        var /= (deltas.size() - 1);
+        return Math.sqrt(var) / mean;
+    }
+
+    private double clamp01(double x) {
+        if (x < 0.0) return 0.0;
+        if (x > 1.0) return 1.0;
+        return x;
     }
 }

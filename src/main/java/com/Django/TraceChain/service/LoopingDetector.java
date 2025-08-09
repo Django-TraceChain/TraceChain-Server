@@ -3,13 +3,13 @@ package com.Django.TraceChain.service;
 import com.Django.TraceChain.model.Transaction;
 import com.Django.TraceChain.model.Transfer;
 import com.Django.TraceChain.model.Wallet;
-import com.Django.TraceChain.repository.TransactionRepository;
 import com.Django.TraceChain.repository.WalletRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 public class LoopingDetector implements MixingDetector {
@@ -17,102 +17,68 @@ public class LoopingDetector implements MixingDetector {
     @Autowired
     private WalletRepository walletRepository;
 
-    @Autowired
-    private TransactionRepository transactionRepository;
-
     private static final int MAX_DEPTH = 4;
 
+    static class Edge {
+        final String to;
+        final LocalDateTime ts;
+        Edge(String to, LocalDateTime ts) { this.to = to; this.ts = ts; }
+    }
+
+    private Map<String, List<Edge>> buildTimeGraph(List<Wallet> wallets) {
+        Map<String, List<Edge>> g = new HashMap<>();
+        for (Wallet w : wallets) {
+            List<Transaction> txs = w.getTransactions();
+            if (txs == null) continue;
+            txs.sort(Comparator.comparing(Transaction::getTimestamp));
+            for (Transaction tx : txs) {
+                LocalDateTime ts = tx.getTimestamp();
+                for (Transfer t : tx.getTransfers()) {
+                    String s = t.getSender(), r = t.getReceiver();
+                    if (s == null || r == null || s.equals(r)) continue;
+                    g.computeIfAbsent(s, k -> new ArrayList<>()).add(new Edge(r, ts));
+                }
+            }
+        }
+        return g;
+    }
+
+    private boolean dfs(String start, String cur, LocalDateTime lastTs,
+                        Map<String, List<Edge>> g, Set<String> vis, List<String> path, int depth) {
+        if (depth > MAX_DEPTH) return false;
+        vis.add(cur);
+        path.add(cur);
+
+        for (Edge e : g.getOrDefault(cur, Collections.emptyList())) {
+            // 시간 단조 증가 제약
+            if (lastTs != null && !e.ts.isAfter(lastTs)) continue;
+
+            if (e.to.equals(start) && path.size() >= 3) {
+                return true; // 짧은 사이클 발견
+            }
+            if (!vis.contains(e.to)) {
+                if (dfs(start, e.to, e.ts, g, new HashSet<>(vis), new ArrayList<>(path), depth + 1)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    @Transactional
     @Override
     public void analyze(List<Wallet> wallets) {
-        Map<String, Set<String>> graph = buildGraph(wallets);
+        Map<String, List<Edge>> g = buildTimeGraph(wallets);
 
         for (Wallet wallet : wallets) {
             String start = wallet.getAddress();
-            System.out.println("[Looping] 분석 시작: " + start);
-
-            Set<String> visited = new HashSet<>();
-            List<String> path = new ArrayList<>();
-            List<List<String>> loopPaths = new ArrayList<>();
-
-            boolean detected = findLoops(start, start, graph, visited, path, loopPaths, 0);
+            boolean detected = dfs(start, start, null, g, new HashSet<>(), new ArrayList<>(), 0);
 
             if (detected && !Boolean.TRUE.equals(wallet.getLoopingPattern())) {
                 wallet.setPatternCnt(wallet.getPatternCnt() + 1);
-                wallet.setLoopingPattern(true);
-
-                System.out.println("[Looping] 패턴 감지됨: " + start);
-                loopPaths.forEach(lp ->
-                        System.out.println("[Looping] 루프 경로: " + String.join(" → ", lp))
-                );
-
-                List<Transaction> originalTransactions = wallet.getTransactions();
-                if (originalTransactions != null && !originalTransactions.isEmpty()) {
-                    List<Transaction> limited = originalTransactions.stream()
-                            .sorted(Comparator.comparing(Transaction::getTimestamp).reversed())
-                            .limit(10)
-                            .map(tx -> transactionRepository.findById(tx.getTxID()).orElse(null))
-                            .filter(Objects::nonNull)
-                            .collect(Collectors.toCollection(ArrayList::new));
-
-                    wallet.setTransactions(limited);
-                }
-
-            } else if (!detected) {
-                wallet.setLoopingPattern(false);
-                System.out.println("[Looping] 패턴 없음: " + start);
             }
-
+            wallet.setLoopingPattern(detected);
             walletRepository.save(wallet);
         }
-    }
-
-    private Map<String, Set<String>> buildGraph(List<Wallet> wallets) {
-        Map<String, Set<String>> graph = new HashMap<>();
-
-        for (Wallet wallet : wallets) {
-            List<Transaction> transactions = wallet.getTransactions();
-            if (transactions == null) continue;
-            transactions.sort(Comparator.comparing(Transaction::getTimestamp));
-
-            for (Transaction tx : transactions) {
-                for (Transfer transfer : tx.getTransfers()) {
-                    String sender = transfer.getSender();
-                    String receiver = transfer.getReceiver();
-                    if (sender == null || receiver == null || sender.equals(receiver)) continue;
-
-                    graph.computeIfAbsent(sender, k -> new HashSet<>()).add(receiver);
-                }
-            }
-        }
-
-        return graph;
-    }
-
-    private boolean findLoops(String start, String current,
-                              Map<String, Set<String>> graph,
-                              Set<String> visited,
-                              List<String> path,
-                              List<List<String>> foundLoops,
-                              int depth) {
-        if (depth > MAX_DEPTH) return false;
-
-        visited.add(current);
-        path.add(current);
-
-        for (String neighbor : graph.getOrDefault(current, Collections.emptySet())) {
-            if (neighbor.equals(start) && path.size() > 1) {
-                foundLoops.add(new ArrayList<>(path));
-                return true; // 루프 발견 시 즉시 종료
-            } else if (!visited.contains(neighbor)) {
-                boolean found = findLoops(start, neighbor, graph,
-                        new HashSet<>(visited),
-                        new ArrayList<>(path),
-                        foundLoops,
-                        depth + 1);
-                if (found) return true; // 자식 노드에서 루프 발견 시 즉시 종료
-            }
-        }
-
-        return false;
     }
 }
